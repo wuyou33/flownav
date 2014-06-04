@@ -1,4 +1,6 @@
-# Optical flow based navigation techniques for an indoor surveillance drone
+# Optical Flow Based Navigation
+
+Optical flow based navigation techniques for an indoor surveillance drone.
 
 ## Goals:
 * autonomous exploration of an indoor environment
