@@ -1,6 +1,10 @@
-inttuple = lambda *x: tuple(map(int,x))
+inimage = lambda shape,xy: map(lambda sx: sx[1] if sx[1] >= 0 and sx[1] <= sx[0] else (0 if sx[1] < 0 else sx[0]), zip(shape[::-1],xy))
 
-roundtuple = lambda *x: tuple(map(lambda y: int(round(y)),x))
+difftuple = lambda p0,p1: abs(p0[0]-p1[0]) + abs(p0[1]-p1[1])
+
+inttuple = lambda *x: (int(x[0]),int(x[1]))
+
+roundtuple = lambda *x: (int(round(x[0])),int(round(x[1])))
 
 
 def reprObj(obj):
