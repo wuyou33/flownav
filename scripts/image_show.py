@@ -12,6 +12,11 @@ from operator import attrgetter
 import time
 import numpy as np
 
+
+def reprObj(obj):
+    return "\n".join(["%s = %s" % (attr, getattr(obj, attr)) for attr in dir(obj) if not attr.startswith('_')])
+
+
 class FrameBuffer:
     '''
     FrameBuffer
@@ -29,7 +34,7 @@ class FrameBuffer:
     def callback(self,data):
         try:
             self.image = self.bridge.imgmsg_to_cv2(data,'bgr8')
-            # self.image = cv2.cvtColor(self.image,cv2.CV_8UC1)
+            self.image = cv2.cvtColor(self.image,cv2.COLOR_BGR2GRAY)
             self.grabbed = False
         except:
             raise
@@ -42,71 +47,88 @@ class FrameBuffer:
             raise
         return self.image
 
-def drawMatch(dm,kp1,kp2,dispim):
+
+def drawMatch(dm,kp1,kp2,dispim,color=-1,thickness=2):
     cv2.line(dispim
              ,tuple(map(int,kp1[dm.queryIdx].pt))
-             ,tuple(map(int,kp2[dm.trainIdx].pt)),(0,255,0),2)
+             ,tuple(map(int,kp2[dm.trainIdx].pt)),color,thickness)
+
 
 def cvtIdx(pt,shape):
     return int(pt[1]*shape[1] + pt[0]) if hasattr(pt, '__len__') else map(int, pt%shape[1], pt//shape[1])
 
+
+def drawInto(src, dst, tl=(0,0)):
+    x, y = tl
+    dst[y:y+src.shape[0], x:x+src.shape[1]] = src
+
+
 def findAppoximateScaling(queryImg, trainImg, matches, queryKPs, trainKPs, compute):
-    trainTempImg = trainImg.copy()
-    queryTempImg = queryImg.copy()    
     scalerange = 1+np.array(range(10))/10.
     inttuple = lambda *x: tuple(map(int,x))
     roundtuple = lambda *x: tuple(map(lambda y: int(round(y)),x))
     res = np.zeros(len(scalerange))
-    
+    expandingKPs = []
+
     for m in matches:
         qkp = queryKPs[m.queryIdx]
-        tkp = trainKPs[m.trainIdx]        
+        tkp = trainKPs[m.trainIdx]
 
         # extract the query image patch
-        x,y = qkp.pt
-        r = qkp.size*1.2*9/10
-
-        x0,y0 = roundtuple(x-r, y-r)
-        x1,y1 = roundtuple(x+r, y+r)
-        querypatch = queryImg[y0:y1+1, x0:x1+1,:]
-        cv2.rectangle(queryTempImg, (x0,y0), (x1,y1), (255,0,0), 2)
-
-        ckp = copy.copy(qkp)
-        ckp.pt = (qkp.pt[0]-x0, qkp.pt[1]-y0)
-        dispim = cv2.drawKeypoints(querypatch,[ckp], None, color=-1)
-        cv2.imshow('Template', dispim)
-        print "Template shape:", querypatch.shape
+        x_qkp,y_qkp = qkp.pt
+        r = qkp.size*1.2/9*20 // 2
+        x0,y0 = roundtuple(x_qkp-r, y_qkp-r)
+        x1,y1 = roundtuple(x_qkp+r, y_qkp+r)
+        querypatch = queryImg[y0:y1, x0:x1]
 
         x_tkp,y_tkp = tkp.pt
         for i,scale in enumerate(scalerange):
-            r = qkp.size*scale*1.2*9/10
+            r = qkp.size*scale*1.2/9*20 // 2
             x0,y0 = roundtuple(x_tkp-r, y_tkp-r)
             x1,y1 = roundtuple(x_tkp+r, y_tkp+r)
-            traintempl = trainImg[y0:y1+1, x0:x1+1,:]
-            dshape = traintempl.shape[1::-1] # reverse of the first 2 coords
-            scaledtempl = cv2.resize(querypatch,dshape
-                                     ,fx=scale,fy=scale, interpolation=cv2.INTER_LINEAR)
-            # skp = copy.copy(tkp)
-            # skp.pt = roundtuple(tkp.pt[0]-x0, tkp.pt[1]-y0)
-            # scaledesc = compute(scaledtempl,[skp])[1]
-            # traindesc = compute(traintempl,[skp])[1]
-            # res[i] = np.sum((scaledesc-traindesc)**2)/(scale**2)
-            res[i] = np.sum(scaledtempl-traintempl)/(scale**2)
+            traintempl = trainImg[y0:y1, x0:x1]
 
-            cv2.imshow('Scaled', scaledtempl)
-            if cv2.waitKey(0)%256 == ord('q'): break
-                            
-        # res = [np.sum((compute(cv2.resize(querydesc,0,fx=scale,fy=scale),qkp)-traindesc)**2)
-        #        for scale in scalerange]
+            # print "Expected scale:", querypatch.shape[0]*scale, querypatch.shape[1]*scale
+            # print "Forced scale:", traintempl.shape
+            try:
+                scaledtempl = cv2.resize(querypatch,traintempl.shape[::-1]
+                                         , fx=scale,fy=scale
+                                         , interpolation=cv2.INTER_LINEAR)
+                res[i] = np.sum(scaledtempl-traintempl)/(scale**2)
+            except:
+                break
+            # print
+        else:
+            # determine if this is a solid match
+            sorted_res = np.sort(res)
+            if sorted_res[0] > 1.2 and sorted_res[0] < 0.8*sorted_res[1]:
+                scale = scalerange[np.argmin(res)]
+                tkp.size = qkp.size*scale*1.2/9*20 // 2
+                expandingKPs.append(tkp)
 
-        x,y = trainKPs[m.trainIdx].pt
-        scale = scalerange[np.argmin(res)]
-        r = qkp.size*scale*1.2*9/10
-        print "Match scale:", scale
-        cv2.rectangle(trainTempImg, roundtuple(x-r,y-r), roundtuple(x+r,y+r), (0,0,255), 2)
+                # # recalculate the best matching scaled template
+                # r = qkp.size*scale*1.2*9/10
+                # x0,y0 = roundtuple(x_tkp-r, y_tkp-r)
+                # x1,y1 = roundtuple(x_tkp+r, y_tkp+r)
+                # traintempl = trainImg[y0:y1+1, x0:x1+1]
+                # scaledtempl = cv2.resize(querypatch, traintempl.shape[::-1]
+                #                          , fx=scale, fy=scale
+                #                          , interpolation=cv2.INTER_LINEAR)
 
-        cv2.imshow('Match', trainTempImg)
-        if cv2.waitKey(0)%256 == ord('q'): return
+                # # # draw the template and the best matching scaled version
+                # templimg = np.zeros((scaledtempl.shape[0],scaledtempl.shape[1]+querypatch.shape[1])
+                #                     , dtype=queryImg.dtype)
+                # templimg[:] = 255
+
+                # drawInto(querypatch,templimg)
+                # drawInto(scaledtempl,templimg,tl=(querypatch.shape[1],0))
+                # cv2.imshow('Template', templimg)
+                # print "Template shape:", querypatch.shape
+                # print "Match scale:", scale
+                
+                #if cv2.waitKey(0)%256 == ord('q'): return
+
+    return expandingKPs
 
 
 if __name__ == '__main__':
@@ -116,7 +138,7 @@ if __name__ == '__main__':
 
     # initialize the feature description and matching methods
     bfmatcher = cv2.BFMatcher()
-    surf_ui = cv2.SURF(600)
+    surf_ui = cv2.SURF(400)
 
     # mask out a portion of the image
     roi = np.zeros(lastFrame.shape[:2],np.uint8)
@@ -152,23 +174,28 @@ if __name__ == '__main__':
         # get only the keypoints that made a match
         goodKPs = tuple( (qkp[m.queryIdx],tkp[m.trainIdx]) for m in matches )
         mkp1, mkp2 = zip(*goodKPs)
-        dispim = cv2.drawKeypoints(currFrame,mkp1+mkp2, None, color=-1)
+        dispim = cv2.drawKeypoints(currFrame,mkp1+mkp2, None, color=(255,0,0))
                                    # , flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
         # for i,m in enumerate(matches):
         #     print "Match %3d: scale + %f" % (i,tkp[m.trainIdx].size-qkp[m.queryIdx].size)
-
-        scalings = findAppoximateScaling(lastFrame, currFrame, matches, qkp, tkp, surf_ui.compute)
-        # draw the matches directly from the array of Dmatches
-        # map(lambda x: drawMatch(x,qkp,tkp,dispim), matches)
 
         # draw the accepted matches
         map(lambda p: cv2.line(dispim,tuple(map(int,p[0].pt))
                                ,tuple(map(int,p[1].pt)),(0,255,0),2)
             , goodKPs)
 
+        expandingKPs = findAppoximateScaling(lastFrame, currFrame, matches
+                                         , qkp, tkp, surf_ui.compute)
+
+        # draw the expanding keypoint matches
+        # map(lambda x: drawMatch(x,qkp,tkp,dispim,color=(0,0,255)), expandingKPs)
+        cv2.drawKeypoints(dispim,expandingKPs, dispim, color=(0,0,255)
+                          ,flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+
         cv2.imshow("Match", dispim)
-        k = cv2.waitKey(1)%256
+
+        k = cv2.waitKey(0 if expandingKPs else 100)%256
         if k == ord('s'):
             fn1 = "Frame%d.png" % frameN-1
             fn2 = "Frame%d.png" % frameN
