@@ -1,6 +1,8 @@
 <!--xml-->
 <launch>
     <node name="ardrone_driver" pkg="ardrone_autonomy" type="ardrone_driver" output="screen" clear_params="true">
+	<param name="realtime_navdata" value="false" />
+        <param name="looprate" value="50" />
         <param name="outdoor" value="1" />
         <param name="max_bitrate" value="4000" />
         <param name="bitrate" value="4000" />
@@ -23,13 +25,4 @@
         <rosparam param="cov/imu_av">[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]</rosparam>
         <rosparam param="cov/imu_or">[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 100000.0]</rosparam>
     </node>
-
-    <node ns="camera" pkg="uvc_camera" type="uvc_camera_node" name="uvc_camera_node" output="screen">
-        <param name="width" type="int" value="640" />
-        <param name="height" type="int" value="480" />
-        <param name="fps" type="int" value="30" />
-        <param name="frame" type="string" value="webcam" />
-        <param name="device" type="string" value="/dev/video0" />
-    </node>
-
 </launch>
