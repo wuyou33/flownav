@@ -1,5 +1,6 @@
 from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image
+from std_msgs.msg import Empty
 from ardrone_autonomy.msg import Navdata
 import rospy
 import cv2
@@ -30,20 +31,3 @@ class FrameBuffer:
         except KeyboardInterrupt:
             raise
         return self.imageq.pop()
-
-class NavdataBuffer:
-    '''
-    NavBuffer
-
-    Creates a subcription node to the image publisher and converts the image
-    into opencv image type.
-    '''
-    def __init__(self, topic="/ardrone/navdata"):
-        self.nav_sub = rospy.Subscriber(topic, Navdata, self.callback)
-        self.navdata = None
-
-    def callback(self,data):
-        self.navdata = data
-
-    def grab(self):
-        return self.navdata

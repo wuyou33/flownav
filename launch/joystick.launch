@@ -1,0 +1,27 @@
+<!--xml-->
+<launch>
+    <node name="joy_node" pkg="joy" type="joy_node" output="screen" clear_params="true">
+		<param name="dev" type="str" value="/dev/input/js0"/>
+    </node>
+
+    <!-- Launches the joystick controller -->
+    <node name="drone_joystick" pkg="flownav" type="drone_joystick.py" output="screen" required="true">
+            <!-- Configures the joystick button mapping -->
+            <param name="ButtonEmergency"	value="3" />
+            <param name="ButtonLand"		value="0" />
+            <param name="ButtonTakeoff"		value="1" />
+
+            <!-- Configures the joystick axis mapping -->
+            <param name="AxisRoll"			value="2" />
+            <param name="AxisPitch"			value="1" />
+            <param name="AxisYaw"			value="0" />
+            <param name="AxisZ"				value="3" />
+
+            <!-- Configures the joystick mapping -->
+            <param name="ScaleRoll"			value="1" />
+            <param name="ScalePitch"                    value="1" />
+            <param name="ScaleYaw"			value="1" />
+            <param name="ScaleZ"			value="1" />
+    </node>
+
+</launch>

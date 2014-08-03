@@ -1,17 +1,18 @@
 #!/usr/bin/env python
-from subprocess import Popen
-import roslib
-import os
-roslib.load_manifest('flownav')
-import sys
 import rospy
+import roslib
+roslib.load_manifest('flownav')
+
 import cv2
-import operator as op
 import numpy as np
-from subscribers import FrameBuffer, NavdataBuffer
-from common import *
 import scipy.stats as stats
+
+from common import *
+from framebuffer import FrameBuffer
 from operator import attrgetter
+from drone_control import DroneController
+from drone_keyboard import KeyboardController
+
 
 def findAppoximateScaling(queryImg, trainImg, matches, queryKPs, trainKPs, compute, showMatches=False):
     scalerange = 1 + np.arange(0.5+0.025,step=0.025)
@@ -86,35 +87,41 @@ def findAppoximateScaling(queryImg, trainImg, matches, queryKPs, trainKPs, compu
     return expandingKPs    
 
 
+#------------------------------------------------------------------------------#
+# process options and set up defaults
+#------------------------------------------------------------------------------#
 import optparse
-
+import os
+from subprocess import Popen
+ 
 parser = optparse.OptionParser(usage="flownav.py [options]")
-parser.add_option("-t", "--topic", dest="topic"
-                  , default="/ardrone"
-                  , help="Which topic to subscribe to for camera feed.")
 parser.add_option("-b", "--bag", dest="bag", default=None
                   , help="Use feed from a ROS bagged recording.")
 parser.add_option("-m", "--show-matches", dest="showmatches"
                   , action="store_true", default=False
                   , help="Show scale matches for each feature.")
+parser.add_option("--uvc", dest="uvc"
+                  , action="store_true", default=False
+                  , help="Use the uvc camera feed for testing purposes.")
+
 (opts, args) = parser.parse_args()
 
 if opts.bag:
     DEVNULL = open(os.devnull, 'wb')
     bagp = Popen(["rosbag","play",opts.bag],stdout=DEVNULL,stderr=DEVNULL)
 
-# start an rospy node to subscribe to the ardrone feeds and grab the first frame
-navdata = NavdataBuffer(opts.topic+"/navdata")
-frmbuf = FrameBuffer(opts.topic+"/image_raw")
+# Initialize the drone controls and subscribe to the navdata feed
 rospy.init_node("flownav", anonymous=False)
-
-lastFrame = frmbuf.grab()
+dronectrl = None if opts.uvc else DroneController() 
+kbctrl =    None if opts.uvc else KeyboardController(dronectrl)
+frmbuf = FrameBuffer("/uvc_camera/image_raw" if opts.uvc else "/ardrone/image_raw")
 
 # initialize the feature description and matching methods
 bfmatcher = cv2.BFMatcher()
 surf_ui = cv2.SURF(1000)
 
 # mask out a portion of the image
+lastFrame = frmbuf.grab()
 roi = np.zeros(lastFrame.shape,np.uint8)
 scrapY, scrapX = lastFrame.shape[0]//8, lastFrame.shape[1]//16
 roi[scrapY:-scrapY, scrapX:-scrapX] = True
@@ -122,22 +129,26 @@ roi[scrapY:-scrapY, scrapX:-scrapX] = True
 # get keypoints and feature descriptors from query image
 qkp, qdesc = surf_ui.detectAndCompute(lastFrame,roi)
 
+#------------------------------------------------------------------------------#
+# main loop
+#------------------------------------------------------------------------------#
 while not rospy.is_shutdown():
     currFrame = frmbuf.grab()
-    currNav = navdata.grab()
 
-    vx, vy, vz = inttuple(*attrgetter('vx','vy','vz')(currNav))
-    batt = currNav.batteryPercent
-    time = currNav.header.stamp.to_sec()
-    frameN = int(frmbuf.msg.header.seq)
-    
-    print time,":",(vx,vy,vz),"mm/s","(BATT:",batt,"%)"
+    if not opts.uvc:
+        currNav = dronectrl.navdata
+
+        vx, vy, vz = inttuple(*attrgetter('vx','vy','vz')(currNav))
+        batt = currNav.batteryPercent
+        time = currNav.header.stamp.to_sec()
+        frameN = int(frmbuf.msg.header.seq)
+
+        print time,":",(vx,vy,vz),"mm/s","(BATT:",batt,"%)"
 
     # get keypoints and feature descriptors from training image
     tkp, tdesc = surf_ui.detectAndCompute(currFrame,roi)
 
     # find the best K matches between this and last frame
-    # matches = bfmatcher.match(qdesc,tdesc)
     try:
         matches = bfmatcher.knnMatch(qdesc,tdesc,k=2)
     except cv2.error as e:
@@ -165,10 +176,6 @@ while not rospy.is_shutdown():
     goodKPs = tuple( (qkp[m.queryIdx],tkp[m.trainIdx]) for m in matches )
     mkp1, mkp2 = zip(*goodKPs) if goodKPs else ([],[])
     dispim = cv2.drawKeypoints(currFrame,mkp1+mkp2, None, color=(255,0,0))
-                               # , flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-
-    # for i,m in enumerate(matches):
-    #     print "Match %3d: scale + %f" % (i,tkp[m.trainIdx].size-qkp[m.queryIdx].size)
 
     # draw the accepted matches
     map(lambda p: cv2.line(dispim,tuple(map(int,p[0].pt))
@@ -181,7 +188,6 @@ while not rospy.is_shutdown():
     # if expandingKPs: print avgtuple(map(attrgetter('pt'),expandingKPs))
 
     # draw the expanding keypoint matches
-    # map(lambda x: drawMatch(x,qkp,tkp,dispim,color=(0,0,255)), expandingKPs)
     cv2.drawKeypoints(dispim,expandingKPs, dispim, color=(0,0,255)
                       ,flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
@@ -189,7 +195,7 @@ while not rospy.is_shutdown():
                   ,(192,192,192),thickness=3)
     cv2.imshow("Match", dispim)
 
-    k = cv2.waitKey(100)%256
+    k = cv2.waitKey(10)%256
     if k == ord('s'):
         fn1 = "Frame%d.png" % frameN-1
         fn2 = "Frame%d.png" % frameN
@@ -198,6 +204,8 @@ while not rospy.is_shutdown():
         cv2.imwrite(fn2,currFrame)
     elif k == ord('q'):
         break
+    elif not opts.uvc:
+        kbctrl.keyPressEvent(k)
 
     lastFrame, qkp, qdesc = currFrame, tkp, tdesc
 
