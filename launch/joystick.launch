@@ -12,16 +12,16 @@
             <param name="ButtonTakeoff"		value="1" />
 
             <!-- Configures the joystick axis mapping -->
-            <param name="AxisRoll"			value="2" />
+            <param name="AxisRoll"			value="0" />
             <param name="AxisPitch"			value="1" />
-            <param name="AxisYaw"			value="0" />
+            <param name="AxisYaw"			value="2" />
             <param name="AxisZ"				value="3" />
 
             <!-- Configures the joystick mapping -->
-            <param name="ScaleRoll"			value="1" />
-            <param name="ScalePitch"                    value="1" />
-            <param name="ScaleYaw"			value="1" />
-            <param name="ScaleZ"			value="1" />
+            <param name="ScaleRoll"			value="4" />
+            <param name="ScalePitch"                    value="4" />
+            <param name="ScaleYaw"			value="4" />
+            <param name="ScaleZ"			value="4" />
     </node>
 
 </launch>

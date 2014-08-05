@@ -13,6 +13,8 @@ from operator import attrgetter
 from drone_control import DroneController
 from drone_keyboard import KeyboardController
 
+from operator import itemgetter
+import itertools as it
 
 def findAppoximateScaling(queryImg, trainImg, matches, queryKPs, trainKPs, compute, showMatches=False):
     scalerange = 1 + np.arange(0.5+0.025,step=0.025)
@@ -26,7 +28,6 @@ def findAppoximateScaling(queryImg, trainImg, matches, queryKPs, trainKPs, compu
         # extract the query image patch
         x_qkp,y_qkp = qkp.pt
         r = qkp.size*1.2/9*20 // 2
-        # r = qkp.size // 2
         x0,y0 = inimage(queryImg.shape,(x_qkp-r, y_qkp-r))
         x1,y1 = inimage(queryImg.shape,(x_qkp+r, y_qkp+r))
         querypatch = queryImg[y0:y1, x0:x1]
@@ -37,7 +38,6 @@ def findAppoximateScaling(queryImg, trainImg, matches, queryKPs, trainKPs, compu
         res[:] = np.nan     # initialize all residuals as invalid
         for i,scale in enumerate(scalerange):
             r = qkp.size*scale*1.2/9*20 // 2
-            # r = qkp.size*scale // 2
             x0,y0 = inimage(trainImg.shape,(x_tkp-r, y_tkp-r))
             x1,y1 = inimage(trainImg.shape,(x_tkp+r, y_tkp+r))
             traintempl = trainImg[y0:y1, x0:x1]
@@ -56,8 +56,7 @@ def findAppoximateScaling(queryImg, trainImg, matches, queryKPs, trainKPs, compu
         res_argmin = np.nanargmin(res)
         scalemin = scalerange[res_argmin]
         if scalemin > 1.2 and res[res_argmin] < 0.8*res[0]:
-            r = qkp.size*scalemin*1.2/9*20 // 2
-            # r = qkp.size*scalemin // 2
+            r = qkp.size*scalemin // 2
             ekp = copyKP(tkp)
             ekp.size = r
             expandingKPs.append(ekp)
@@ -85,6 +84,13 @@ def findAppoximateScaling(queryImg, trainImg, matches, queryKPs, trainKPs, compu
             if cv2.waitKey(0)%256 == ord('q'): showMatches=False
 
     return expandingKPs    
+
+
+def generateuniqid():
+    uid = 2 # starts at 2 since default class_id for keypoints can be -1 or +1
+    while(1):
+        yield uid
+        uid += 1
 
 
 #------------------------------------------------------------------------------#
@@ -118,7 +124,7 @@ frmbuf = FrameBuffer("/uvc_camera/image_raw" if opts.uvc else "/ardrone/image_ra
 
 # initialize the feature description and matching methods
 bfmatcher = cv2.BFMatcher()
-surf_ui = cv2.SURF(1000)
+surf_ui = cv2.SURF(500)
 
 # mask out a portion of the image
 lastFrame = frmbuf.grab()
@@ -126,8 +132,16 @@ roi = np.zeros(lastFrame.shape,np.uint8)
 scrapY, scrapX = lastFrame.shape[0]//8, lastFrame.shape[1]//16
 roi[scrapY:-scrapY, scrapX:-scrapX] = True
 
+#helper
+getMatchKPs = lambda m: (trainKP[getattr(m,'trainIdx')],queryKP[getattr(m,'queryIdx')])
+
 # get keypoints and feature descriptors from query image
-qkp, qdesc = surf_ui.detectAndCompute(lastFrame,roi)
+queryKP, qdesc = surf_ui.detectAndCompute(lastFrame,roi)
+
+multimatches = {}
+
+idgen = generateuniqid()
+getuniqid = lambda : idgen.next()
 
 #------------------------------------------------------------------------------#
 # main loop
@@ -145,69 +159,89 @@ while not rospy.is_shutdown():
 
         print time,":",(vx,vy,vz),"mm/s","(BATT:",batt,"%)"
 
+    ### Find keypoint matches for this frame and filter them
     # get keypoints and feature descriptors from training image
-    tkp, tdesc = surf_ui.detectAndCompute(currFrame,roi)
+    trainKP, tdesc = surf_ui.detectAndCompute(currFrame,roi)
 
     # find the best K matches between this and last frame
     try:
         matches = bfmatcher.knnMatch(qdesc,tdesc,k=2)
     except cv2.error as e:
         print e
-        continue
-
-    # filter out poor matches by ratio test
-    matches = [m[0] for m in matches if len(m)==2
-               and (m[0].distance < 0.8*m[1].distance)
-               and m[0].distance < 0.25]
+        matches = []
 
     # assume a gaussian distribution of spatial distances between frames
     # to set a threshold for removing outliers
-    # mindist = [difftuple(tkp[m.trainIdx].pt,qkp[m.queryIdx].pt) for m in matches]
+    # mindist = [diffKP(*getMatchKPs(m[0])) for m in matches]
     # trimdist = stats.trimboth(mindist,0.1)
-    # threshdist = np.mean(trimdist) + 3*np.std(trimdist)
+    # threshdist = np.mean(trimdist) + np.std(trimdist)
     threshdist = 100
 
+    # filter out poor matches by ratio test, maximum (descriptor) distance, and
+    # maximum spatial distance
+    matches = [m[0] for m in matches
+               if len(m)==2
+               and m[0].distance < 0.8*m[1].distance
+               and m[0].distance < 0.25
+               and diffKP(*getMatchKPs(m[0])) < threshdist]
+
+
+    ### Update the keypoint history
+    # add these keypoints to the feature history list
+    for m in matches:
+        qkp, tkp = getMatchKPs(m)
+        class_id = qkp.class_id if qkp.class_id in multimatches else getuniqid()
+
+        # copy over the most recent detect
+        trainKP[m.trainIdx].class_id = class_id
+        multimatches[class_id] = KeyPoint(trainKP[m.trainIdx])
+
+        multimatches[class_id].detects += 1
+        multimatches[class_id].age = -1 # reset this KPs age
+    # discard keypoints that haven't been found recently
+    for clsid in multimatches.keys():
+        multimatches[clsid].age += 1
+        if multimatches[clsid].age >= MAX_AGE: del multimatches[clsid]
+
+    # get only the keypoints that made a match and are not expanding
+    matchKPs = tuple(getMatchKPs(m) for m in matches)
+
+    ### Find expanding keypoints
     # filter out features which haven't grown
-    matches = [m for m in matches
-               if tkp[m.trainIdx].size > qkp[m.queryIdx].size
-               and difftuple(tkp[m.trainIdx].pt,qkp[m.queryIdx].pt) < threshdist]
-
-    # get only the keypoints that made a match
-    goodKPs = tuple( (qkp[m.queryIdx],tkp[m.trainIdx]) for m in matches )
-    mkp1, mkp2 = zip(*goodKPs) if goodKPs else ([],[])
-    dispim = cv2.drawKeypoints(currFrame,mkp1+mkp2, None, color=(255,0,0))
-
-    # draw the accepted matches
-    map(lambda p: cv2.line(dispim,tuple(map(int,p[0].pt))
-                           ,tuple(map(int,p[1].pt)),(0,255,0),2)
-        , goodKPs)
-
+    matches = [m for m in matches if trainKP[m.trainIdx].size > queryKP[m.queryIdx].size]
     expandingKPs = findAppoximateScaling(lastFrame, currFrame, matches
-                                         , qkp, tkp, surf_ui.compute,showMatches=opts.showmatches)
+                                         , queryKP, trainKP, surf_ui.compute
+                                         , showMatches=opts.showmatches)
 
-    # if expandingKPs: print avgtuple(map(attrgetter('pt'),expandingKPs))
+    ### Draw some results!
 
-    # draw the expanding keypoint matches
+    # draw each key point and a line between their match
+    mkp1, mkp2 = zip(*matchKPs) if matchKPs else ([],[])
+    dispim = cv2.drawKeypoints(currFrame,mkp1+mkp2, None, color=(255,0,0))
+    map(lambda p: cv2.line(dispim, inttuple(*p[0].pt), inttuple(*p[1].pt), (0,255,0), 2), matchKPs)
+
+    # draw each expanding key point
     cv2.drawKeypoints(dispim,expandingKPs, dispim, color=(0,0,255)
                       ,flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
+    # draw the search bounding box
     cv2.rectangle(dispim,(scrapX,scrapY),(currFrame.shape[1]-scrapX,currFrame.shape[0]-scrapY)
-                  ,(192,192,192),thickness=3)
+                  ,(192,192,192),thickness=2)
+
     cv2.imshow("Match", dispim)
+    k = cv2.waitKey(1)%256
+    if not opts.uvc: kbctrl.keyPressEvent(k)    # Send a new command to the drone if requested
 
-    k = cv2.waitKey(10)%256
-    if k == ord('s'):
-        fn1 = "Frame%d.png" % frameN-1
-        fn2 = "Frame%d.png" % frameN
-        print "saved as %s, %s..." % (fn1,fn2)
-        cv2.imwrite(fn1,lastFrame)
-        cv2.imwrite(fn2,currFrame)
-    elif k == ord('q'):
-        break
-    elif not opts.uvc:
-        kbctrl.keyPressEvent(k)
-
-    lastFrame, qkp, qdesc = currFrame, tkp, tdesc
+    lastFrame, queryKP, qdesc = currFrame, trainKP, tdesc
 
 if opts.bag: bagp.kill()
 cv2.destroyAllWindows()
+
+
+
+
+
+
+
+
+

@@ -24,7 +24,7 @@ class DroneController(object):
         self.subNavdata = rospy.Subscriber('/ardrone/navdata',Navdata,self.ReceiveNavdata)
         self.navdata=Navdata()
 
-        self.pubLand    = rospy.Publisher('/ardrone/land',Empty,)
+        self.pubLand    = rospy.Publisher('/ardrone/land',Empty)
         self.pubTakeoff = rospy.Publisher('/ardrone/takeoff',Empty)
         self.pubReset   = rospy.Publisher('/ardrone/reset',Empty)
 
@@ -59,6 +59,6 @@ class DroneController(object):
         self.command.linear.z  = z_velocity
         self.command.angular.z = yaw_velocity
 
-    def SendCommand(self):
+    def SendCommand(self,event):
         if self.navdata.state in itemgetter("Flying","GotoHover","Hovering")(DroneStatus):
                 self.pubCommand.publish(self.command)
