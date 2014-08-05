@@ -12,7 +12,7 @@ class FrameBuffer:
     Creates a subcription node to the image publisher and converts the image
     into opencv image type.
     '''
-    def __init__(self, topic="/ardrone/image_raw"):
+    def __init__(self, topic):
         self.bridge = CvBridge()
         self.image_sub = rospy.Subscriber(topic, Image, self.callback)
         self.imageq = []

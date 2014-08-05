@@ -8,9 +8,9 @@ ButtonLand = 0
 ButtonTakeoff = 1
 
 # define the default mapping between joystick axes and their corresponding directions
-AxisRoll = 2
+AxisRoll = 0
 AxisPitch = 1
-AxisYaw = 0
+AxisYaw = 2
 AxisZ = 3
 
 # define the default scaling to apply to the axis inputs. useful where an axis is inverted
@@ -47,7 +47,6 @@ if __name__=='__main__':
     # Firstly we setup a ros node, so that we can communicate with the other packages
     rospy.init_node('ardrone_joystick')
 
-    # Next load in the parameters from the launch-file
     ButtonEmergency = int ( rospy.get_param("~ButtonEmergency",ButtonEmergency) )
     ButtonLand = int ( rospy.get_param("~ButtonLand",ButtonLand) )
     ButtonTakeoff = int ( rospy.get_param("~ButtonTakeoff",ButtonTakeoff) )
@@ -59,6 +58,18 @@ if __name__=='__main__':
     ScalePitch = float ( rospy.get_param("~ScalePitch",ScalePitch) )
     ScaleYaw = float ( rospy.get_param("~ScaleYaw",ScaleYaw) )
     ScaleZ = float ( rospy.get_param("~ScaleZ",ScaleZ) )
+
+    print ButtonEmergency
+    print ButtonLand
+    print ButtonTakeoff
+    print AxisRoll
+    print AxisPitch
+    print AxisYaw
+    print AxisZ
+    print ScaleRoll
+    print ScalePitch
+    print ScaleYaw
+    print ScaleZ
 
     controller = DroneController()
     subJoystick = JoystickController(controller)

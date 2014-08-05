@@ -1,20 +1,49 @@
-Optical Flow Based Navigation
-====================
-Optical flow based navigation techniques for an indoor surveillance drone.
+Obstacle Avoidance Using Expansion Estimation
+=============================================
 
-Assumptions and notes
----------------------
-- Pose and trajectory are known (via IMU)
-- Scene is mostly static / motion is dominated by camera motion
+This project implements an algorithm by Mori and Scherer (paper [here](https://www-preview.ri.cmu.edu/pub_files/2013/5/monocularObstacleAvoidance.pdf)) for obstacle detection using expansion cueues from a monocular camera. The project code is integrated into the Robot Operating System architecture (ROS), allowing for a modular design that combines several components in an elegant fashion. Modules include
+
+1. uvc_camera       - for streaming video feed from webcam for testing purposes
+2. ardrone_autonomy - for communication with and control of the AR Drone
+3. opencv           - for feature detection and matching
+
+Assumptions
+-----------
+
+If we assume a rectangular coordinate system we can represent a scene by having the origin at the drone's location and moving with constant velocity alone the Z axis.
+
+Pose and trajectory are known via IMU. In particular, velocity and position are known.
+
+Obstacles are static / motion is dominated by camera motion.
+
+
+Additional notes and instructions (mostly for my own reference) are cited below covering thing's I've learned while doing this project.
+
+
+Previous works
+--------------
+
+Camus: Iterative search for mean location of flow ("center of mass" of optical flow)
+
+Match filter: matched focus of expansion filter for angular component
+        Pros
+        + Doesn't depend on magnitude!
+        + invariant to rotations
+        + weighting by participating components improves robustness
+        + a radially increasing weighting may improve even further
+
+        Issues
+        + large search space (but can limit to small search space once found)
+        + depends heavily on textured environment
 
 
 Notes on Robot Operating System (ROS) 
 -------------------------------------
 **Installation**
 
-1. Download ROS virtual machine at [RosVM](http://nootrix.com/downloads/#RosVM)
+1. Download ROS virtual machine at [RosVM](http://nootrix.com/downloads/#RosVM) or install the ros-packages onto your system (see the ROS installation instructions on their wiki).
 
-**Basic building**
+**Step for building a catkin project**
 
 1. Create project folder (e.g., ~/catkin_ws)
 2. Create a folder for dependent packages ~/catkin_ws/src
@@ -23,19 +52,19 @@ Notes on Robot Operating System (ROS)
 > export ROS_PACKAGE_PATH=$ROS_PACKAGE_PATH:~/catkin_ws/src/<some_package>
 5. Make the packages with catkin
 ```
-> cd ~/catkin_ws
-> catkin_make
+$ cd ~/catkin_ws
+$ catkin_make
 ```
 6. Run catkin_make install (not sure this is entirely necessary)
 7. Set the path with setup.bash
 ```
-source ~/catkin_ws/devel/setup.bash
+$ . ~/catkin_ws/devel/setup.bash
 ```
 
-Now the packages and launch files should be available. For example, for the tum_ardrone package you should now be able to run
+Now the packages and launch files should be available. For example, for the flownav package you could run
 ```
-roslaunch tum_ardrone ardrone_driver.launch
-roslaunch tum_ardrone tum_ardrone.launch
+roslaunch flownav joystick.launch
+roslaunch flownav flownav.launch
 ```
 Good deal!
 
@@ -80,20 +109,3 @@ broadcast 192.168.56.255
 ```
 <IP>    <hostname>
 ```
-
-
-Previous works
---------------
-
-Camus: Iterative search for "mean" location of flow (center of OF mass)
-
-Match filter: matched focus of expansion filter for angular component
-        Pros
-        + Doesn't depend on magnitude!
-        + weighting by participating components improves robustness
-        + a radially increasing weighting may improve even further
-        + invariant to rotations
-
-        Issues
-        + large search space (but can limit to small search space once found)
-        + depends heavily on textured environment
