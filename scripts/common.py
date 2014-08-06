@@ -26,7 +26,8 @@ class KeyPoint(object):
 
 inimage = lambda shape,xy: map(lambda sx: sx[1] if sx[1] >= 0 and sx[1] <= sx[0] else (0 if sx[1] < 0 else sx[0]), zip(shape[::-1],xy))
 
-diffKP = lambda kp0,kp1: np.sqrt((kp0.pt[0]-kp1.pt[0])**2 + (kp0.pt[1]-kp1.pt[1])**2)
+diffKP_L2 = lambda kp0,kp1: np.sqrt((kp0.pt[0]-kp1.pt[0])**2 + (kp0.pt[1]-kp1.pt[1])**2)
+diffKP = lambda kp0,kp1: (kp0.pt[0]-kp1.pt[0], kp0.pt[1]-kp1.pt[1])
 
 difftuple = lambda p0,p1: np.sqrt((p0[0]-p1[0])**2 + (p0[1]-p1[1])**2)
 

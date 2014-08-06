@@ -53,6 +53,16 @@ class DroneController(object):
     def SendEmergency(self):
         self.pubReset.publish(Empty())
 
+    def EvadeLeft(self):
+        self.linear.y = -self.command.linear.x
+        # self.pitch = INC
+        for i in range(5): self.controller.SendCommand()
+
+    def EvadeRight(self):
+        self.linear.y = self.command.linear.x        
+        # self.pitch = INC
+        for i in range(5): self.controller.SendCommand()        
+        
     def SetCommand(self,roll=0,pitch=0,yaw_velocity=0,z_velocity=0):
         self.command.linear.x  = pitch
         self.command.linear.y  = roll

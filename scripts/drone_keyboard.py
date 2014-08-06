@@ -57,6 +57,5 @@ class KeyboardController(object):
                 self.yaw_velocity = 0
                 self.z_velocity = 0
 
-        # # finally we set the command to be sent. The controller handles sending this at regular intervals
+        # finally we set the command to be sent. The controller handles sending this at regular intervals
         self.controller.SetCommand(self.roll, self.pitch, self.yaw_velocity, self.z_velocity)
-        print self.roll, self.pitch, self.yaw_velocity, self.z_velocity

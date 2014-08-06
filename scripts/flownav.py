@@ -11,7 +11,7 @@ from common import *
 from framebuffer import FrameBuffer
 from operator import attrgetter
 from drone_control import DroneController
-from drone_keyboard import KeyboardController
+from auto_control import AutoController
 
 from operator import itemgetter
 import itertools as it
@@ -64,9 +64,9 @@ def findAppoximateScaling(queryImg, trainImg, matches, queryKPs, trainKPs, compu
             if not showMatches: continue
 
             # recalculate the best matching scaled template
-            x0,y0 = roundtuple(x_tkp-r, y_tkp-r)
-            x1,y1 = roundtuple(x_tkp+r, y_tkp+r)
-            scaledtempl = cv2.resize(querypatch, (x1-x0,y1-y0)
+            x0,y0 = inimage(trainImg.shape,(x_tkp-r, y_tkp-r))
+            x1,y1 = inimage(trainImg.shape,(x_tkp+r, y_tkp+r))
+            scaledtempl = cv2.resize(querypatch, inttuple(x1-x0,y1-y0)
                                      , fx=scale, fy=scale
                                      , interpolation=cv2.INTER_LINEAR)
 
@@ -103,6 +103,8 @@ from subprocess import Popen
 parser = optparse.OptionParser(usage="flownav.py [options]")
 parser.add_option("-b", "--bag", dest="bag", default=None
                   , help="Use feed from a ROS bagged recording.")
+parser.add_option("--threshold", dest="threshold", type=float,default=4000.
+                  , help="Use feed from a ROS bagged recording.")
 parser.add_option("-m", "--show-matches", dest="showmatches"
                   , action="store_true", default=False
                   , help="Show scale matches for each feature.")
@@ -119,12 +121,12 @@ if opts.bag:
 # Initialize the drone controls and subscribe to the navdata feed
 rospy.init_node("flownav", anonymous=False)
 dronectrl = None if opts.uvc else DroneController() 
-kbctrl =    None if opts.uvc else KeyboardController(dronectrl)
+autoctrl =    None if opts.uvc else AutoController(dronectrl)
 frmbuf = FrameBuffer("/uvc_camera/image_raw" if opts.uvc else "/ardrone/image_raw")
 
 # initialize the feature description and matching methods
 bfmatcher = cv2.BFMatcher()
-surf_ui = cv2.SURF(500)
+surf_ui = cv2.SURF(hessianThreshold=opts.threshold)
 
 # mask out a portion of the image
 lastFrame = frmbuf.grab()
@@ -132,8 +134,8 @@ roi = np.zeros(lastFrame.shape,np.uint8)
 scrapY, scrapX = lastFrame.shape[0]//8, lastFrame.shape[1]//16
 roi[scrapY:-scrapY, scrapX:-scrapX] = True
 
-#helper
-getMatchKPs = lambda m: (trainKP[getattr(m,'trainIdx')],queryKP[getattr(m,'queryIdx')])
+# get the keypoints corresponding to a match
+getMatchKPs = lambda x: (queryKP[x.queryIdx],trainKP[x.trainIdx])
 
 # get keypoints and feature descriptors from query image
 queryKP, qdesc = surf_ui.detectAndCompute(lastFrame,roi)
@@ -146,18 +148,15 @@ getuniqid = lambda : idgen.next()
 #------------------------------------------------------------------------------#
 # main loop
 #------------------------------------------------------------------------------#
+frameN = 1
 while not rospy.is_shutdown():
     currFrame = frmbuf.grab()
+    frameN = frmbuf.msg.header.seq
+    time =  frmbuf.msg.header.stamp.to_sec()
 
-    if not opts.uvc:
-        currNav = dronectrl.navdata
-
-        vx, vy, vz = inttuple(*attrgetter('vx','vy','vz')(currNav))
-        batt = currNav.batteryPercent
-        time = currNav.header.stamp.to_sec()
-        frameN = int(frmbuf.msg.header.seq)
-
-        print time,":",(vx,vy,vz),"mm/s","(BATT:",batt,"%)"
+    if dronectrl:
+        vx, vy, vz = inttuple(*attrgetter('vx','vy','vz')(dronectrl.navdata))
+        batt = dronectrl.navdata.batteryPercent
 
     ### Find keypoint matches for this frame and filter them
     # get keypoints and feature descriptors from training image
@@ -172,7 +171,7 @@ while not rospy.is_shutdown():
 
     # assume a gaussian distribution of spatial distances between frames
     # to set a threshold for removing outliers
-    # mindist = [diffKP(*getMatchKPs(m[0])) for m in matches]
+    # mindist = [diffKP_L2(*getMatchKPs(m[0])) for m in matches]
     # trimdist = stats.trimboth(mindist,0.1)
     # threshdist = np.mean(trimdist) + np.std(trimdist)
     threshdist = 100
@@ -183,25 +182,24 @@ while not rospy.is_shutdown():
                if len(m)==2
                and m[0].distance < 0.8*m[1].distance
                and m[0].distance < 0.25
-               and diffKP(*getMatchKPs(m[0])) < threshdist]
+               and diffKP_L2(*getMatchKPs(m[0])) < threshdist]
 
 
     ### Update the keypoint history
     # add these keypoints to the feature history list
     for m in matches:
-        qkp, tkp = getMatchKPs(m)
-        class_id = qkp.class_id if qkp.class_id in multimatches else getuniqid()
+        if queryKP[m.queryIdx].class_id in multimatches:
+            trainKP[m.trainIdx].class_id = queryKP[m.queryIdx].class_id
+        else:
+            trainKP[m.trainIdx].class_id = getuniqid()
+            multimatches[trainKP[m.trainIdx].class_id] = KeyPoint(trainKP[m.trainIdx])            
 
-        # copy over the most recent detect
-        trainKP[m.trainIdx].class_id = class_id
-        multimatches[class_id] = KeyPoint(trainKP[m.trainIdx])
-
-        multimatches[class_id].detects += 1
-        multimatches[class_id].age = -1 # reset this KPs age
+        multimatches[trainKP[m.trainIdx].class_id].detects += 1
+        multimatches[trainKP[m.trainIdx].class_id].age = -1
     # discard keypoints that haven't been found recently
     for clsid in multimatches.keys():
         multimatches[clsid].age += 1
-        if multimatches[clsid].age >= MAX_AGE: del multimatches[clsid]
+        if multimatches[clsid].age > MAX_AGE: del multimatches[clsid]
 
     # get only the keypoints that made a match and are not expanding
     matchKPs = tuple(getMatchKPs(m) for m in matches)
@@ -209,6 +207,7 @@ while not rospy.is_shutdown():
     ### Find expanding keypoints
     # filter out features which haven't grown
     matches = [m for m in matches if trainKP[m.trainIdx].size > queryKP[m.queryIdx].size]
+
     expandingKPs = findAppoximateScaling(lastFrame, currFrame, matches
                                          , queryKP, trainKP, surf_ui.compute
                                          , showMatches=opts.showmatches)
@@ -229,19 +228,17 @@ while not rospy.is_shutdown():
                   ,(192,192,192),thickness=2)
 
     cv2.imshow("Match", dispim)
+
+    indanger = False
+    x,y = 0,0
+    if indanger:
+        if x < currFrame.shape[1]:  dronectrl.EvadeRight()
+        else:                       dronectrl.EvadeLeft()
+    
     k = cv2.waitKey(1)%256
-    if not opts.uvc: kbctrl.keyPressEvent(k)    # Send a new command to the drone if requested
+    if not opts.uvc: autoctrl.keyPressEvent(k)    # Send a new command to the drone if requested
 
     lastFrame, queryKP, qdesc = currFrame, trainKP, tdesc
 
 if opts.bag: bagp.kill()
 cv2.destroyAllWindows()
-
-
-
-
-
-
-
-
-
