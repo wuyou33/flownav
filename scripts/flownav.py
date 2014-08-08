@@ -10,14 +10,15 @@ import scipy.stats as stats
 from common import *
 from framebuffer import FrameBuffer
 from operator import attrgetter
-from drone_control import DroneController
-from auto_control import AutoController
+from drone_control import DroneController, DroneStatus
+from auto_control import AutoController,CharMap
 
 from operator import itemgetter
 import itertools as it
+import time
 
 def findAppoximateScaling(queryImg, trainImg, matches, queryKPs, trainKPs, compute, showMatches=False):
-    scalerange = 1 + np.arange(0.5+0.025,step=0.025)
+    scalerange = 1 + np.arange(0.7+0.025,step=0.025)
     res = np.zeros(len(scalerange))
     expandingKPs = []
 
@@ -28,6 +29,7 @@ def findAppoximateScaling(queryImg, trainImg, matches, queryKPs, trainKPs, compu
         # extract the query image patch
         x_qkp,y_qkp = qkp.pt
         r = qkp.size*1.2/9*20 // 2
+        # r = qkp.size//2
         x0,y0 = inimage(queryImg.shape,(x_qkp-r, y_qkp-r))
         x1,y1 = inimage(queryImg.shape,(x_qkp+r, y_qkp+r))
         querypatch = queryImg[y0:y1, x0:x1]
@@ -38,50 +40,57 @@ def findAppoximateScaling(queryImg, trainImg, matches, queryKPs, trainKPs, compu
         res[:] = np.nan     # initialize all residuals as invalid
         for i,scale in enumerate(scalerange):
             r = qkp.size*scale*1.2/9*20 // 2
+            # r = qkp.size*scale // 2         
             x0,y0 = inimage(trainImg.shape,(x_tkp-r, y_tkp-r))
             x1,y1 = inimage(trainImg.shape,(x_tkp+r, y_tkp+r))
             traintempl = trainImg[y0:y1, x0:x1]
+            traintempl = (traintempl - np.mean(traintempl))/np.std(traintempl)
 
             if not traintempl.size: break # feature got too large to match
 
             scaledtempl = cv2.resize(querypatch,traintempl.shape[::-1]
                                      , fx=scale,fy=scale
                                      , interpolation=cv2.INTER_LINEAR)
+            scaledtempl = (scaledtempl - np.mean(scaledtempl))/np.std(scaledtempl)
 
-            # res[i] = cv2.matchTemplate(traintempl,scaledtempl,cv2.TM_SQDIFF)/(scale**2)
-            res[i] = np.sum((scaledtempl-traintempl)**2)/(scale**2)
+            # res[i] = cv2.matchTemplate(traintempl,scaledtempl,cv2.TM_CCORR_NORMED)/(scale**2)
+            res[i] = np.sum(np.abs(scaledtempl-traintempl))/(scale**2)
         if all(np.isnan(res)): continue # could not match the feature
 
         # determine if this is a solid match
         res_argmin = np.nanargmin(res)
         scalemin = scalerange[res_argmin]
         if scalemin > 1.2 and res[res_argmin] < 0.8*res[0]:
-            r = qkp.size*scalemin // 2
-            ekp = copyKP(tkp)
-            ekp.size = r
-            expandingKPs.append(ekp)
+            trainKPs[m.trainIdx].size = qkp.size*scalemin
+            expandingKPs.append(trainKPs[m.trainIdx])
 
             if not showMatches: continue
 
             # recalculate the best matching scaled template
+            r = qkp.size*scalemin*1.2/9*20 // 2            
             x0,y0 = inimage(trainImg.shape,(x_tkp-r, y_tkp-r))
             x1,y1 = inimage(trainImg.shape,(x_tkp+r, y_tkp+r))
-            scaledtempl = cv2.resize(querypatch, inttuple(x1-x0,y1-y0)
-                                     , fx=scale, fy=scale
+            traintempl = trainImg[y0:y1, x0:x1]            
+            scaledtempl = cv2.resize(querypatch, traintempl.shape[::-1]
+                                     , fx=scalemin, fy=scalemin
                                      , interpolation=cv2.INTER_LINEAR)
 
             # draw the template and the best matching scaled version
-            templimg = np.zeros((scaledtempl.shape[0],scaledtempl.shape[1]+querypatch.shape[1])
-                                , dtype=queryImg.dtype)
+            templimg = np.zeros((scaledtempl.shape[0],scaledtempl.shape[1]+traintempl.shape[1]+querypatch.shape[1])
+                                , dtype=trainImg.dtype)
             templimg[:] = 255
 
-            drawInto(querypatch,templimg)
+            drawInto(querypatch, templimg)
             drawInto(scaledtempl,templimg,tl=(querypatch.shape[1],0))
-            cv2.putText(templimg,"scale=%.3f" % scalemin,(0,templimg.shape[0]-5)
-                        ,cv2.FONT_HERSHEY_TRIPLEX, 0.8, (0,0,0))
+            drawInto(traintempl,templimg,tl=(querypatch.shape[1]+traintempl.shape[1],0))
+            # cv2.putText(templimg,"scale=%.3f" % scalemin,(0,templimg.shape[0]-5)
+            #             ,cv2.FONT_HERSHEY_TRIPLEX, 0.8, (0,0,0))
+            print "scale =",scalemin
             cv2.imshow('Template', templimg)
 
-            if cv2.waitKey(0)%256 == ord('q'): showMatches=False
+            k = cv2.waitKey(0)%256
+            while k not in map(ord,(' ','q','\n')): k = cv2.waitKey(0)%256
+            if k == ord('q'): showMatches=False
 
     return expandingKPs    
 
@@ -145,18 +154,19 @@ multimatches = {}
 idgen = generateuniqid()
 getuniqid = lambda : idgen.next()
 
+print "Keyboard Controls:"
+for k,v in CharMap.items():
+    print "\t",k,'=',repr(v)
+
 #------------------------------------------------------------------------------#
 # main loop
 #------------------------------------------------------------------------------#
 frameN = 1
 while not rospy.is_shutdown():
     currFrame = frmbuf.grab()
+    t1 = time.time()
     frameN = frmbuf.msg.header.seq
-    time =  frmbuf.msg.header.stamp.to_sec()
-
-    if dronectrl:
-        vx, vy, vz = inttuple(*attrgetter('vx','vy','vz')(dronectrl.navdata))
-        batt = dronectrl.navdata.batteryPercent
+    frametime =  frmbuf.msg.header.stamp.to_sec()
 
     ### Find keypoint matches for this frame and filter them
     # get keypoints and feature descriptors from training image
@@ -202,11 +212,14 @@ while not rospy.is_shutdown():
         if multimatches[clsid].age > MAX_AGE: del multimatches[clsid]
 
     # get only the keypoints that made a match and are not expanding
-    matchKPs = tuple(getMatchKPs(m) for m in matches)
+    matchKPs = tuple(getMatchKPs(m) for m in matches
+                     if multimatches[trainKP[m.trainIdx].class_id].detects > 2)
 
     ### Find expanding keypoints
     # filter out features which haven't grown
-    matches = [m for m in matches if trainKP[m.trainIdx].size > queryKP[m.queryIdx].size]
+    matches = [m for m in matches
+               if trainKP[m.trainIdx].size > queryKP[m.queryIdx].size
+               and multimatches[trainKP[m.trainIdx].class_id].detects > 2]
 
     expandingKPs = findAppoximateScaling(lastFrame, currFrame, matches
                                          , queryKP, trainKP, surf_ui.compute
@@ -227,6 +240,12 @@ while not rospy.is_shutdown():
     cv2.rectangle(dispim,(scrapX,scrapY),(currFrame.shape[1]-scrapX,currFrame.shape[0]-scrapY)
                   ,(192,192,192),thickness=2)
 
+    if dronectrl:
+        vx, vy, vz = inttuple(*attrgetter('vx','vy','vz')(dronectrl.navdata))
+        batt = dronectrl.navdata.batteryPercent
+        stat = "BATT=%.2f" % (batt)
+        cv2.putText(dispim,stat,(10,currFrame.shape[0]-20)
+                    ,cv2.FONT_HERSHEY_TRIPLEX, 0.65, (0,0,255))
     cv2.imshow("Match", dispim)
 
     indanger = False
@@ -234,7 +253,8 @@ while not rospy.is_shutdown():
     if indanger:
         if x < currFrame.shape[1]:  dronectrl.EvadeRight()
         else:                       dronectrl.EvadeLeft()
-    
+
+    print time.time() - t1
     k = cv2.waitKey(1)%256
     if not opts.uvc: autoctrl.keyPressEvent(k)    # Send a new command to the drone if requested
 

@@ -3,11 +3,12 @@ from geometry_msgs.msg import Twist  	 # for sending commands to the drone
 from std_msgs.msg import Empty       	 # for land/takeoff/emergency
 from ardrone_autonomy.msg import Navdata # for receiving navdata feedback
 from operator import itemgetter
+from collections import OrderedDict
 
 # Some Constants
 COMMAND_PERIOD = 100 #ms
 
-DroneStatus = dict(Emergency = 0
+DroneStatus = OrderedDict(Emergency = 0
                    ,Inited = 1
                    ,Landed = 2
                    ,Flying = 3
@@ -30,8 +31,8 @@ class DroneController(object):
 
         self.pubCommand = rospy.Publisher('/cmd_vel',Twist)
 
-        self.command = Twist()
-        self.commandTimer = rospy.Timer(rospy.Duration(COMMAND_PERIOD/1000.0),self.SendCommand)
+        self.commandTimer = rospy.Timer(rospy.Duration(COMMAND_PERIOD/1000.0),self.UpdateCommand)
+        self.queue = []
 
         rospy.on_shutdown(self.SendLand)
 
@@ -53,22 +54,15 @@ class DroneController(object):
     def SendEmergency(self):
         self.pubReset.publish(Empty())
 
-    def EvadeLeft(self):
-        self.linear.y = -self.command.linear.x
-        # self.pitch = INC
-        for i in range(5): self.controller.SendCommand()
-
-    def EvadeRight(self):
-        self.linear.y = self.command.linear.x        
-        # self.pitch = INC
-        for i in range(5): self.controller.SendCommand()        
+    def SendCommand(self,roll=0,pitch=0,yaw_velocity=0,z_velocity=0):
+        cmd = Twist()
+        cmd.linear.x  = pitch
+        cmd.linear.y  = roll
+        cmd.linear.z  = z_velocity
+        cmd.angular.z = yaw_velocity
+        self.queue.append(cmd)
         
-    def SetCommand(self,roll=0,pitch=0,yaw_velocity=0,z_velocity=0):
-        self.command.linear.x  = pitch
-        self.command.linear.y  = roll
-        self.command.linear.z  = z_velocity
-        self.command.angular.z = yaw_velocity
-
-    def SendCommand(self,event):
+    def UpdateCommand(self,event):
         if self.navdata.state in itemgetter("Flying","GotoHover","Hovering")(DroneStatus):
-                self.pubCommand.publish(self.command)
+            cmd = self.queue.pop() if self.queue else Twist()
+            self.pubCommand.publish(cmd)
