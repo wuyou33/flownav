@@ -257,7 +257,7 @@ while not rospy.is_shutdown():
                # and multimatches[trainKP[m.trainIdx].class_id].detects > 3]
 
     ### Draw matches
-    dispim = dispim if opts.draw else currFrame
+    dispim = dispim if not opts.nodraw else currFrame
     if not opts.nodraw:
         # draw each key point and a line between their match
         mkp1, mkp2 = zip(*matchKPs) if matchKPs else ([],[])
@@ -290,7 +290,7 @@ while not rospy.is_shutdown():
     cv2.imshow("Match", dispim)
 
     indanger = False
-    x,y = 0,0
+    x,y = avgKP(expandingKPs) if expandingKPs else 0,0
     if indanger:
         if x < currFrame.shape[1]:  dronectrl.EvadeRight()
         else:                       dronectrl.EvadeLeft()

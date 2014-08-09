@@ -37,7 +37,7 @@ inttuple = lambda *x: tuple(map(int,x))
 
 roundtuple = lambda *x: tuple(map(int,map(round,x)))
 
-avgtuple = lambda x: map(lambda y: sum(y)/len(y),zip(*x))
+avgKP = lambda keypoints: map(lambda x: sum(x)/len(keypoints),zip(*map(attrgetter('pt'),keypoints)))
 
 def reprObj(obj):
     return "\n".join(["%s = %s" % (attr, getattr(obj, attr)) for attr in dir(obj) if not attr.startswith('_')])
