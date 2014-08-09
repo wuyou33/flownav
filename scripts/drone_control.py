@@ -25,11 +25,12 @@ class DroneController(object):
         self.subNavdata = rospy.Subscriber('/ardrone/navdata',Navdata,self.ReceiveNavdata)
         self.navdata=Navdata()
 
-        self.pubLand    = rospy.Publisher('/ardrone/land',Empty)
-        self.pubTakeoff = rospy.Publisher('/ardrone/takeoff',Empty)
-        self.pubReset   = rospy.Publisher('/ardrone/reset',Empty)
+        queue_size=1
+        self.pubLand    = rospy.Publisher('/ardrone/land',Empty,queue_size=queue_size)
+        self.pubTakeoff = rospy.Publisher('/ardrone/takeoff',Empty,queue_size=queue_size)
+        self.pubReset   = rospy.Publisher('/ardrone/reset',Empty,queue_size=queue_size)
 
-        self.pubCommand = rospy.Publisher('/cmd_vel',Twist)
+        self.pubCommand = rospy.Publisher('/cmd_vel',Twist,queue_size=20)
 
         self.commandTimer = rospy.Timer(rospy.Duration(COMMAND_PERIOD/1000.0),self.UpdateCommand)
         self.queue = []
@@ -65,4 +66,5 @@ class DroneController(object):
     def UpdateCommand(self,event):
         if self.navdata.state in itemgetter("Flying","GotoHover","Hovering")(DroneStatus):
             cmd = self.queue.pop() if self.queue else Twist()
+            print cmd if cmd else "None"
             self.pubCommand.publish(cmd)

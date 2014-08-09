@@ -15,19 +15,23 @@ class FrameBuffer:
     def __init__(self, topic):
         self.bridge = CvBridge()
         self.image_sub = rospy.Subscriber(topic, Image, self.callback)
-        self.image = None
+        self.imageq = []
+        self.count = 0
 
     def callback(self,data):
         try:
             img = self.bridge.imgmsg_to_cv2(data,'bgr8')
+            self.count += 1
             self.msg = data
-            self.image = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
-        except ROSException:
+            self.imageq.append(cv2.cvtColor(img,cv2.COLOR_BGR2GRAY))
+        except rospy.ROSException:
+            raise
+        except KeyboardInterrupt:
             raise
 
     def grab(self):
         try:
-            while self.image is None: None
+            while not self.imageq: None#rospy.sleep(rospy.Duration(secs=0,nsecs=1e3))
         except KeyboardInterrupt:
             raise
-        return self.image
+        return self.imageq.pop()

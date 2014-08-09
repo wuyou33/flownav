@@ -1,9 +1,11 @@
 from drone_control import DroneStatus
+from operator import itemgetter
+
 MAX_SPEED = 0.3
 INC = 0.1
 
 KeyMapping=dict(FlightToggle = ' '
-                ,StartStopToggle = '\n'
+                ,StartStopToggle = '\r'
                 ,IncreaseVelocity = 'j'
                 ,DecreaseVelocity = 'k'
                 ,IncreaseAltitude = 'h'
@@ -15,7 +17,7 @@ KeyMapping=dict(FlightToggle = ' '
                 ,TurnRight= '.')
                 
 CharMap = KeyMapping
-KeyMapping = dict(zip(KeyMapping.keys(),map(ord,KeyMapping.values())))
+KeyMapping = dict(zip(KeyMapping.keys(),[ord(v) for v in KeyMapping.values() if v != '']))
 
 class AutoController(object):
     def __init__(self,controller):
@@ -38,7 +40,6 @@ class AutoController(object):
         print "Evade Left"
         self.SendCommands(n=8)
         self.roll = 0
-        self.SendCommands()
 
     def EvadeRight(self):
         self.roll = INC
@@ -46,7 +47,6 @@ class AutoController(object):
         print "Evade Right"
         self.SendCommands(n=8)
         self.roll = 0
-        self.SendCommands()
 
     def Pause(self):
         for attr in self.__last_state:
@@ -57,13 +57,10 @@ class AutoController(object):
         self.yaw_velocity = 0
         self.z_velocity = 0
 
-        self.SendCommands()        
-
     def Play(self):
         for attr,val in self.__last_state.items():
             setattr(self,attr,val)
         if self.pitch == 0: self.pitch = INC
-        self.SendCommands()
 
     def keyPressEvent(self, key):
         if key == KeyMapping['Emergency']:
@@ -75,30 +72,29 @@ class AutoController(object):
             else:
                 self.__controller.SendLand()
 
-        elif key == KeyMapping['StartStopToggle']:
-            if self.__controller.navdata.state in itemgetter("Flying","GotoHover","Hovering")(DroneStatus):
-                self.Play()
-            else:
-                self.Pause()
-
-        elif key == KeyMapping['EvadeLeft']:
-            self.EvadeLeft()
-        elif key == KeyMapping['EvadeRight']:
-            self.EvadeRight()
-
-        elif key == KeyMapping['TurnLeft']:
-                self.yaw_velocity = -2*INC
-                self.SendCommands(8)
-                self.yaw_velocity = 0
-                self.SendCommands()
-        elif key == KeyMapping['TurnRight']:
-                self.yaw_velocity = 2*INC
-                self.SendCommands(8)
-                self.yaw_velocity = 0
-                self.SendCommands()
-
         else:
-            if key == KeyMapping['IncreaseVelocity']:
+            if key == KeyMapping['StartStopToggle']:
+                if self.__controller.navdata.state in itemgetter("Flying","GotoHover","Hovering")(DroneStatus):
+                    self.Play()
+                else:
+                    self.Pause()
+
+            elif key == KeyMapping['EvadeLeft']:
+                self.EvadeLeft()
+            elif key == KeyMapping['EvadeRight']:
+                self.EvadeRight()
+
+            elif key == KeyMapping['TurnLeft']:
+                    self.yaw_velocity = -2*INC
+                    self.SendCommands(8)
+                    self.yaw_velocity = 0
+
+            elif key == KeyMapping['TurnRight']:
+                    self.yaw_velocity = 2*INC
+                    self.SendCommands(8)
+                    self.yaw_velocity = 0
+
+            elif key == KeyMapping['IncreaseVelocity']:
                 self.pitch = min(MAX_SPEED,self.pitch+INC)
             elif key == KeyMapping['DecreaseVelocity']:
                 self.pitch = max(-MAX_SPEED,self.pitch-INC)
@@ -109,3 +105,4 @@ class AutoController(object):
                 self.z_velocity = max(-MAX_SPEED,self.z_velocity-INC)
 
             self.SendCommands()
+        
