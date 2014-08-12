@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import rospy
 from sensor_msgs.msg import Joy
+from drone_control import DroneController
 
 # define the default mapping between joystick buttons and their corresponding actions
 ButtonEmergency = 3
@@ -20,32 +21,33 @@ ScaleYaw = 1.0
 ScaleZ = 1.0
 
 
-class JoystickController(object):
-    def __init__(self,controller):
+class JoystickController(DroneController):
+    def __init__(self):
         self.joy_sub = rospy.Subscriber('/joy', Joy, self.ReceiveJoystickMessage)
-        self.controller=controller
 
     # handles the reception of joystick packets
     def ReceiveJoystickMessage(self,data):
         if data.buttons[ButtonEmergency]==1:
             rospy.loginfo("Emergency Button Pressed")
-            self.controller.SendEmergency()
+            self.SendEmergency()
         elif data.buttons[ButtonLand]==1:
             rospy.loginfo("Land Button Pressed")
-            self.controller.SendLand()
+            self.SendLand()
         elif data.buttons[ButtonTakeoff]==1:
             rospy.loginfo("Takeoff Button Pressed")
-            self.controller.SendTakeoff()
+            self.SendTakeoff()
         else:
-            self.controller.SetCommand(data.axes[AxisRoll]/ScaleRoll,data.axes[AxisPitch]/ScalePitch,data.axes[AxisYaw]/ScaleYaw,data.axes[AxisZ]/ScaleZ)
+            self.SendCommand(roll=data.axes[AxisRoll]/ScaleRoll
+                             ,pitch=data.axes[AxisPitch]/ScalePitch
+                             ,yaw=data.axes[AxisYaw]/ScaleYaw
+                             ,z_velocity=data.axes[AxisZ]/ScaleZ)
 
 
 if __name__=='__main__':
     import sys
-    from drone_control import DroneController
     
     # Firstly we setup a ros node, so that we can communicate with the other packages
-    rospy.init_node('ardrone_joystick')
+    rospy.init_node('ardrone/joystick')
 
     ButtonEmergency = int ( rospy.get_param("~ButtonEmergency",ButtonEmergency) )
     ButtonLand = int ( rospy.get_param("~ButtonLand",ButtonLand) )
@@ -59,19 +61,6 @@ if __name__=='__main__':
     ScaleYaw = float ( rospy.get_param("~ScaleYaw",ScaleYaw) )
     ScaleZ = float ( rospy.get_param("~ScaleZ",ScaleZ) )
 
-    print ButtonEmergency
-    print ButtonLand
-    print ButtonTakeoff
-    print AxisRoll
-    print AxisPitch
-    print AxisYaw
-    print AxisZ
-    print ScaleRoll
-    print ScalePitch
-    print ScaleYaw
-    print ScaleZ
-
-    controller = DroneController()
-    subJoystick = JoystickController(controller)
+    subJoystick = JoystickController()
 
     rospy.spin()

@@ -1,108 +1,48 @@
-from drone_control import DroneStatus
-from operator import itemgetter
+from drone_control import DroneStatus,DroneController,STEP
+from collections import OrderedDict
+from common import avgKP
 
-MAX_SPEED = 0.3
-INC = 0.1
+class AutoController(DroneController):
+    def __init__(self):
+        super(AutoController,self).__init__()
 
-KeyMapping=dict(FlightToggle = ' '
-                ,StartStopToggle = '\r'
-                ,IncreaseVelocity = 'j'
-                ,DecreaseVelocity = 'k'
-                ,IncreaseAltitude = 'h'
-                ,DecreaseAltitude = 'l'
-                ,Emergency = 'e'
-                ,EvadeLeft = '<'
-                ,EvadeRight= '>'
-                ,TurnLeft = ','
-                ,TurnRight= '.')
-                
-CharMap = KeyMapping
-KeyMapping = dict(zip(KeyMapping.keys(),[ord(v) for v in KeyMapping.values() if v != '']))
+    def RollLeft(self):
+        self.SendCommand(roll = 2*STEP, ncycles=10)
+        self.SendCommand(roll = 0)
 
-class AutoController(object):
-    def __init__(self,controller):
-        self.__controller=controller
+    def RollRight(self):
+        self.SendCommand(roll = -2*STEP, ncycles=10)
+        self.SendCommand(roll = 0)
 
-        self.pitch = 0
-        self.roll = 0
-        self.yaw_velocity = 0
-        self.z_velocity = 0
+    def TurnLeft(self):
+        self.SendCommand(yaw_velocity = 2*STEP, ncycles=10)
+        self.SendCommand(yaw_velocity = 0)
 
-        self.__last_state = dict(pitch=0,roll=0,yaw_velocity=0,z_velocity=0)
-
-    def SendCommands(self,n=1):
-        for i in range(n):
-            self.__controller.SendCommand(self.roll, self.pitch, self.yaw_velocity, self.z_velocity)
-
-    def EvadeLeft(self):
-        self.roll = -INC
-        # self.pitch = INC
-        print "Evade Left"
-        self.SendCommands(n=8)
-        self.roll = 0
-
-    def EvadeRight(self):
-        self.roll = INC
-        # self.pitch = INC
-        print "Evade Right"
-        self.SendCommands(n=8)
-        self.roll = 0
-
+    def TurnRight(self):
+        self.SendCommand(yaw_velocity = -2*STEP, ncycles=10)
+        self.SendCommand(yaw_velocity = 0)
+        
     def Pause(self):
-        for attr in self.__last_state:
-            self.__last_state[attr] = getattr(self,attr)
-
-        self.pitch = 0
-        self.roll = 0
-        self.yaw_velocity = 0
-        self.z_velocity = 0
+        self._last_state.update(self._current_state)
 
     def Play(self):
-        for attr,val in self.__last_state.items():
-            setattr(self,attr,val)
-        if self.pitch == 0: self.pitch = INC
+        self._current_state.update(self._last_state)
+        if self._current_state['pitch'] == 0: self.SendCommand(pitch=STEP)
 
-    def keyPressEvent(self, key):
-        if key == KeyMapping['Emergency']:
-            self.__controller.SendEmergency()
+    # def React(self,keypoints,img):
+    #     if not keypoints: return
 
-        elif key == KeyMapping['FlightToggle']:
-            if self.__controller.navdata.state == DroneStatus["Landed"]:
-                self.__controller.SendTakeoff()
-            else:
-                self.__controller.SendLand()
+    #     filtkps = [kp for kp in keypoints if kp.detects > 1]
 
-        else:
-            if key == KeyMapping['StartStopToggle']:
-                if self.__controller.navdata.state in itemgetter("Flying","GotoHover","Hovering")(DroneStatus):
-                    self.Play()
-                else:
-                    self.Pause()
+    #     print zip(filtkps,attrgetter('scalehist')(filtkps))
 
-            elif key == KeyMapping['EvadeLeft']:
-                self.EvadeLeft()
-            elif key == KeyMapping['EvadeRight']:
-                self.EvadeRight()
+    #     x_obs = avgKP(filtkps)
+    #     if x_obs < img.shape[1]//2: self.RollRight()
+    #     if x_obs >= img.shape[1]//2: self.RollLeft()
 
-            elif key == KeyMapping['TurnLeft']:
-                    self.yaw_velocity = -2*INC
-                    self.SendCommands(8)
-                    self.yaw_velocity = 0
+if __name__=='__main__':
+    rospy.init_node('ardrone/reactive_controller')
 
-            elif key == KeyMapping['TurnRight']:
-                    self.yaw_velocity = 2*INC
-                    self.SendCommands(8)
-                    self.yaw_velocity = 0
+    autoctrl = AutoController()
 
-            elif key == KeyMapping['IncreaseVelocity']:
-                self.pitch = min(MAX_SPEED,self.pitch+INC)
-            elif key == KeyMapping['DecreaseVelocity']:
-                self.pitch = max(-MAX_SPEED,self.pitch-INC)
-
-            elif key == KeyMapping['IncreaseAltitude']:
-                self.z_velocity = min(MAX_SPEED,self.z_velocity+INC)
-            elif key == KeyMapping['DecreaseAltitude']:
-                self.z_velocity = max(-MAX_SPEED,self.z_velocity-INC)
-
-            self.SendCommands()
-        
+    rospy.spin()

@@ -5,8 +5,8 @@ from ardrone_autonomy.msg import Navdata # for receiving navdata feedback
 from operator import itemgetter
 from collections import OrderedDict
 
-# Some Constants
-COMMAND_PERIOD = 100 #ms
+MAX_SPEED=1
+STEP = 0.1
 
 DroneStatus = OrderedDict(Emergency = 0
                    ,Inited = 1
@@ -19,27 +19,32 @@ DroneStatus = OrderedDict(Emergency = 0
                    ,Landing = 8
                    ,Looping = 9)
 
+inrange = lambda x: self.max_speed if x > max_speed else (-self.max_speed if x < -self.max_speed else x)
+
 
 class DroneController(object):
-    def __init__(self):
-        self.subNavdata = rospy.Subscriber('/ardrone/navdata',Navdata,self.ReceiveNavdata)
+    """
+    Thanks to Mike Hammer for providing the base for this class. His code can be
+    found at: https://github.com/mikehamer/ardrone_tutorials
+    """
+    def __init__(self,max_speed=0.5,command_period=100):
+        self._current_state = dict(roll=0,pitch=0,z_velocity=0,yaw_velocity=0)
+        self._last_state = self._current_state.copy()
+        self._queue = []
+
         self.navdata=Navdata()
+        self.subNavdata = rospy.Subscriber('/ardrone/navdata',Navdata,lambda data: setattr(self,'navdata',data))
 
-        queue_size=1
-        self.pubLand    = rospy.Publisher('/ardrone/land',Empty,queue_size=queue_size)
-        self.pubTakeoff = rospy.Publisher('/ardrone/takeoff',Empty,queue_size=queue_size)
-        self.pubReset   = rospy.Publisher('/ardrone/reset',Empty,queue_size=queue_size)
+        self.pubLand    = rospy.Publisher('/ardrone/land',Empty,queue_size=1)
+        self.pubTakeoff = rospy.Publisher('/ardrone/takeoff',Empty,queue_size=1)
+        self.pubReset   = rospy.Publisher('/ardrone/reset',Empty,queue_size=1)
+        self.pubCommand = rospy.Publisher('/cmd_vel',Twist,queue_size=30)
 
-        self.pubCommand = rospy.Publisher('/cmd_vel',Twist,queue_size=20)
-
-        self.commandTimer = rospy.Timer(rospy.Duration(COMMAND_PERIOD/1000.0),self.UpdateCommand)
-        self.queue = []
+        self.commandTimer = rospy.Timer(rospy.Duration(command_period/1000.0),self.__PublishCommand)
+        self.max_speed = min(abs(max_speed),MAX_SPEED)
 
         rospy.on_shutdown(self.SendLand)
-
-    def ReceiveNavdata(self,navdata):
-        self.navdata = navdata
-
+    
     def SendTakeoff(self):
         # Send a takeoff message to the ardrone driver. Note we only
         # send a takeoff message if the drone is landed - an unexpected
@@ -55,16 +60,25 @@ class DroneController(object):
     def SendEmergency(self):
         self.pubReset.publish(Empty())
 
-    def SendCommand(self,roll=0,pitch=0,yaw_velocity=0,z_velocity=0):
+    def SendCommand(self,pitch=None,roll=None,z_velocity=None,yaw_velocity=None,ncycles=1,relative=False):
+        if ncycles==0: return
+
+        # update the state dictionary (only variables that were set)
+        cmdargs = dict(pitch=pitch,roll=roll,z_velocity=z_velocity,yaw_velocity=yaw_velocity)
+        self._current_state.update(*[(k,v+self._current_state[k] if relative else v)
+                                     for k,v in cmdargs if v is not None])
+
         cmd = Twist()
-        cmd.linear.x  = pitch
-        cmd.linear.y  = roll
-        cmd.linear.z  = z_velocity
-        cmd.angular.z = yaw_velocity
-        self.queue.append(cmd)
-        
-    def UpdateCommand(self,event):
+        cmd.linear.x  = inrange(self._current_state['pitch'])
+        cmd.linear.y  = inrange(self._current_state['roll'])
+        cmd.linear.z  = inrange(self._current_state['z_velocity'])
+        cmd.angular.z = inrange(self._current_state['yaw_velocity'])
+        self._queue.append(cmd)
+
+        self.SendCommand(ncycles=ncycles-1)
+
+    def __PublishCommand(self,event):
         if self.navdata.state in itemgetter("Flying","GotoHover","Hovering")(DroneStatus):
-            cmd = self.queue.pop() if self.queue else Twist()
-            print cmd if cmd else "None"
-            self.pubCommand.publish(cmd)
+            # if nothing is left in the queue, just repeat the current state
+            if len(self._queue) == 0: self.SendCommand()
+            self.pubCommand.publish(self._queue.pop())
