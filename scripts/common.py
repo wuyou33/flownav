@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
+from operator import attrgetter
 
-MAX_AGE = 10
 
 class KeyPoint(object):
     def __init__(self,kp=None):
@@ -13,16 +13,21 @@ class KeyPoint(object):
         self.pt = (0,0)
         self.response = 0
         self.size = 0
+        self.scalehist = []
         if kp: copyKP(kp,self)
 
-    # def __eq__(self,rhs):
-    #     return self.class_id == rhs.class_id
 
-    # def __lt__(self,rhs):
-    #     return self.age < rhs.age
+def BlobBoundingBox(blob):
+    diff = blob.any(axis=0)
+    ones = np.flatnonzero(diff)
+    xmin, xmax = ones[0], ones[-1]
 
-    # def __gt__(self,rhs):
-    #     return self.age > rhs.age
+    diff = blob.any(axis=1)
+    ones = np.flatnonzero(diff)
+    ymin, ymax = ones[0], ones[-1]
+
+    return (xmin,ymin),(xmax,ymax)
+
 
 trunc_coords = lambda shape,xy: [x if x >= 0 and x <= dimsz else (0 if x < 0 else dimsz)
                                  for dimsz,x in zip(shape[::-1],xy)]
@@ -50,7 +55,7 @@ def drawInto(src, dst, tl=(0,0)):
     dst[tl[1]:tl[1]+src.shape[0], tl[0]:tl[0]+src.shape[1]] = src
 
 def copyKP(src,dst=None):
-    if dst is None: dst = cv2.KeyPoint()
+    if dst is None: dst = KeyPoint()
     for attr in dir(src):
         if not attr.startswith('_'): setattr(dst,attr,getattr(src,attr))
     return dst

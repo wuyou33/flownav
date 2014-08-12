@@ -25,7 +25,7 @@
         <param name="detections_select_h" value="32" />
         <param name="detections_select_v_hsync" value="128" />
         <param name="enemy_without_shell" value="0" />
-        <param name="do_imu_caliberation" value="false" />
+        <param name="do_imu_caliberation" value="true" />
         <param name="tf_prefix" value="mydrone" />
 
         <param name="enable_legacy_navdata" value="true" />
