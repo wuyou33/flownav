@@ -1,18 +1,17 @@
 <!--xml-->
 <launch>
     <node name="ardrone_driver" pkg="ardrone_autonomy" type="ardrone_driver" output="screen" clear_params="true">
+        <param name="navdata_demo" value="0" />
 	<param name="realtime_navdata" value="false" />
-        <param name="realtime_video" value="false" />
         <param name="looprate" value="50" />
 
         <param name="outdoor" value="1" />
+        <param name="flight_without_shell" value="0" />
 
         <param name="max_bitrate" value="2000" />        
         <param name="bitrate" value="4000" />
         <param name="video_codec" value="129" />
 
-        <param name="navdata_demo" value="0" />
-        <param name="flight_without_shell" value="0" />
         <param name="altitude_max" value="3000" />
         <param name="altitude_min" value="300" />
 

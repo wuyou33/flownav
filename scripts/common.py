@@ -17,6 +17,23 @@ class KeyPoint(object):
         if kp: copyKP(kp,self)
 
 
+class Cluster(object):
+    def __init__(self,keypoints,img):
+        self.mask = np.zeros_like(img)
+        for kp in keypoints:
+            cv2.circle(self.mask,inttuple(*kp.pt),int(kp.size//2),1,thickness=-1)
+        self.area = np.sum(self.mask)
+        self.pt = findCoM(self.mask)
+        self.KPs = [KeyPoint(kp) for kp in keypoints]
+
+    def __repr__(self):
+        return repr(map(repr,(self.pt,self.area,len(self.KPs))))
+
+    def drawBoundingBox(self,img,color=0,thickness=None):
+        p0,p1 = BlobBoundingBox(self.mask)
+        cv2.rectangle(img,p0,p1,color,thickness)
+
+
 def BlobBoundingBox(blob):
     diff = blob.any(axis=0)
     ones = np.flatnonzero(diff)
@@ -29,8 +46,19 @@ def BlobBoundingBox(blob):
     return (xmin,ymin),(xmax,ymax)
 
 
+def findCoM(mask):
+    colnums = np.arange(np.shape(mask)[1]).reshape(1,-1)
+    rownums = np.arange(np.shape(mask)[0]).reshape(-1,1)
+
+    x = np.sum(mask*colnums) // np.sum(mask)
+    y = np.sum(mask*rownums) // np.sum(mask)
+
+    return x, y
+
 trunc_coords = lambda shape,xy: [x if x >= 0 and x <= dimsz else (0 if x < 0 else dimsz)
                                  for dimsz,x in zip(shape[::-1],xy)]
+
+overlap = lambda kp1,kp2: kp1.size//2+kp2.size//2 > diffKP_L2(kp1,kp2)
 
 diffKP_L2 = lambda kp0,kp1: np.sqrt((kp0.pt[0]-kp1.pt[0])**2 + (kp0.pt[1]-kp1.pt[1])**2)
 
@@ -48,7 +76,7 @@ def reprObj(obj):
     return "\n".join(["%s = %s" % (attr, getattr(obj, attr)) for attr in dir(obj) if not attr.startswith('_')])
 
 def cvtIdx(pt,shape):
-    return int(pt[1]*shape[1] + pt[0]) if hasattr(pt, '__len__') else map(int, pt%shape[1], pt//shape[1])
+    return int(pt[1]*shape[1] + pt[0]) if hasattr(pt, '__len__') else map(int, (pt%shape[1], pt//shape[1]))
 
 
 def drawInto(src, dst, tl=(0,0)):
@@ -57,5 +85,6 @@ def drawInto(src, dst, tl=(0,0)):
 def copyKP(src,dst=None):
     if dst is None: dst = KeyPoint()
     for attr in dir(src):
-        if not attr.startswith('_'): setattr(dst,attr,getattr(src,attr))
+        if not attr.startswith('_'):
+            setattr(dst,attr,getattr(src,attr))
     return dst

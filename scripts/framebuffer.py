@@ -8,16 +8,39 @@ import numpy as np
 
 
 class VideoBuffer(object):
-    def __init__(self,vidfile):
+    def __init__(self,vidfile,start=None,stop=None):
         self.cap = cv2.VideoCapture(vidfile)
+        self.name = str(vidfile)
+        self.live = not isinstance(vidfile,str)
+        self.start = start
+        self.stop = stop
+
+        if not self.live:
+            if self.start:  self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.start)
+            else:           self.start = self.cap.get(cv2.CAP_PROP_POS_FRAMES)
+            if not self.stop:
+                self.stop = self.cap.get(cv2.CAP_PROP_FRAME_COUNT)
 
     def grab(self):
-        img = self.cap.read()[1]
-        if img is not None:
+        if not self.live and self.cap.get(cv2.CAP_PROP_POS_FRAMES) == self.stop:
+            img = np.array([])
+        else:
+            img = self.cap.read()[1]
+        if img.size:
             img = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
         else:
             img = np.array([])
-        return img
+
+        return img, -1 if self.live else self.cap.get(cv2.CAP_PROP_POS_MSEC)
+
+    def seek(self,nframes):
+        if self.live:
+            print "Error: Seek not available with live streams"
+        else:
+            framenum = self.cap.get(cv2.CAP_PROP_POS_FRAMES)+nframes
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES
+                         ,self.stop if framenum >= self.stop
+                         else max(0,framenum))
 
     def close(self):
         self.cap.release()
@@ -36,6 +59,7 @@ class ROSCamBuffer(object):
         self.image = None
         self.count = 0
         self.msg = None
+        self.name=topic
 
     def callback(self,data):
         try:
@@ -54,7 +78,7 @@ class ROSCamBuffer(object):
             while self.image is None: None#rospy.sleep(rospy.Duration(secs=0,nsecs=1e3))
         except KeyboardInterrupt:
             raise
-        return self.image
+        return self.image, self.msg.header.stamp.to_
 
     def close(self):
         self.image_sub.unregister()
