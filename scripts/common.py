@@ -24,14 +24,11 @@ class Cluster(object):
             cv2.circle(self.mask,inttuple(*kp.pt),int(kp.size//2),1,thickness=-1)
         self.area = np.sum(self.mask)
         self.pt = findCoM(self.mask)
+        self.p0, self.p1 = BlobBoundingBox(self.mask)
         self.KPs = [KeyPoint(kp) for kp in keypoints]
 
     def __repr__(self):
-        return repr(map(repr,(self.pt,self.area,len(self.KPs))))
-
-    def drawBoundingBox(self,img,color=0,thickness=None):
-        p0,p1 = BlobBoundingBox(self.mask)
-        cv2.rectangle(img,p0,p1,color,thickness)
+        return str(map(repr,(self.pt,self.area,len(self.KPs))))
 
 
 def BlobBoundingBox(blob):
@@ -55,10 +52,13 @@ def findCoM(mask):
 
     return x, y
 
+
 trunc_coords = lambda shape,xy: [x if x >= 0 and x <= dimsz else (0 if x < 0 else dimsz)
                                  for dimsz,x in zip(shape[::-1],xy)]
 
-overlap = lambda kp1,kp2: kp1.size//2+kp2.size//2 > diffKP_L2(kp1,kp2)
+bboverlap = lambda cl1,cl2: (cl1.p0[0] <= cl2.p1[0] and cl1.p1[0] >= cl2.p0[0]) and (cl1.p0[1] <= cl2.p1[1] and cl1.p1[1] >= cl2.p0[1])
+
+overlap = lambda kp1,kp2: (kp1.size//2+kp2.size//2) > diffKP_L2(kp1,kp2)
 
 diffKP_L2 = lambda kp0,kp1: np.sqrt((kp0.pt[0]-kp1.pt[0])**2 + (kp0.pt[1]-kp1.pt[1])**2)
 

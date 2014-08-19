@@ -19,8 +19,8 @@ class KeyboardController(AutoController):
     Thanks to Mike Hammer for providing the base for this class. His code can be
     found at: https://github.com/mikehamer/ardrone_tutorials
     """
-    def __init__(self):
-        super(KeyboardController,self).__init__()
+    def __init__(self,*args,**kwargs):
+        super(KeyboardController,self).__init__(*args,**kwargs)
 
     def keyPressEvent(self, key):
         if key == KeyMapping['Emergency']:

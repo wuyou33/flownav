@@ -19,15 +19,13 @@ DroneStatus = OrderedDict(Emergency = 0
                    ,Landing = 8
                    ,Looping = 9)
 
-inrange = lambda x: self.max_speed if x > max_speed else (-self.max_speed if x < -self.max_speed else x)
-
 
 class DroneController(object):
     """
     Thanks to Mike Hammer for providing the base for this class. His code can be
     found at: https://github.com/mikehamer/ardrone_tutorials
     """
-    def __init__(self,max_speed=0.5,command_period=100):
+    def __init__(self,max_speed=0.5,cmd_period=100):
         self._current_state = dict(roll=0,pitch=0,z_velocity=0,yaw_velocity=0)
         self._last_state = self._current_state.copy()
         self._queue = []
@@ -40,7 +38,7 @@ class DroneController(object):
         self.pubReset   = rospy.Publisher('/ardrone/reset',Empty,queue_size=1)
         self.pubCommand = rospy.Publisher('/cmd_vel',Twist,queue_size=30)
 
-        self.commandTimer = rospy.Timer(rospy.Duration(command_period/1000.0),self.__PublishCommand)
+        self.commandTimer = rospy.Timer(rospy.Duration(cmd_period/1000.0),self.__PublishCommand)
         self.max_speed = min(abs(max_speed),MAX_SPEED)
 
         rospy.on_shutdown(self.SendLand)
@@ -65,14 +63,16 @@ class DroneController(object):
 
         # update the state dictionary (only variables that were set)
         cmdargs = dict(pitch=pitch,roll=roll,z_velocity=z_velocity,yaw_velocity=yaw_velocity)
-        self._current_state.update(*[(k,v+self._current_state[k] if relative else v)
-                                     for k,v in cmdargs if v is not None])
-
+        if cmdargs:
+            self._current_state.update([(k,(v+self._current_state[k]) if relative else v)
+                                        for k,v in cmdargs.items() if v is not None])
+            self.__saturate()
+        
         cmd = Twist()
-        cmd.linear.x  = inrange(self._current_state['pitch'])
-        cmd.linear.y  = inrange(self._current_state['roll'])
-        cmd.linear.z  = inrange(self._current_state['z_velocity'])
-        cmd.angular.z = inrange(self._current_state['yaw_velocity'])
+        cmd.linear.x  = self._current_state['pitch']
+        cmd.linear.y  = self._current_state['roll']
+        cmd.linear.z  = self._current_state['z_velocity']
+        cmd.angular.z = self._current_state['yaw_velocity']
         self._queue.append(cmd)
 
         self.SendCommand(ncycles=ncycles-1)
@@ -82,3 +82,9 @@ class DroneController(object):
             # if nothing is left in the queue, just repeat the current state
             if len(self._queue) == 0: self.SendCommand()
             self.pubCommand.publish(self._queue.pop())
+
+    def __saturate(self):
+        for cmd in self._current_state:
+            self._current_state[cmd] = self.max_speed if self._current_state[cmd] > self.max_speed else (-self.max_speed if self._current_state[cmd] < -self.max_speed else self._current_state[cmd])
+
+

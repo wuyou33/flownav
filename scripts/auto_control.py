@@ -3,8 +3,8 @@ from collections import OrderedDict
 from common import avgKP
 
 class AutoController(DroneController):
-    def __init__(self):
-        super(AutoController,self).__init__()
+    def __init__(self,*args,**kwargs):
+        super(AutoController,self).__init__(*args,**kwargs)
 
     def RollLeft(self):
         self.SendCommand(roll = 2*STEP, ncycles=10)
@@ -24,6 +24,7 @@ class AutoController(DroneController):
         
     def Pause(self):
         self._last_state.update(self._current_state)
+        self.SendCommand(pitch=0)
 
     def Play(self):
         self._current_state.update(self._last_state)

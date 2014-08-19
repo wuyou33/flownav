@@ -32,39 +32,66 @@ def React(controller,img,timediff):
         if x_obs >= img.shape[1]//2: self.RollLeft()
 
 
-def Synthesize(keypoints,img):
+def ClusterKeypoints(keypoints,img):
     if len(keypoints) < 2: return
     # cluster overlapping features
     cluster = []
-    unclusteredKPs = [kp for kp in keypoints]
+    unclusteredKPs = sorted(keypoints,key=attrgetter('pt'))
+    
     while unclusteredKPs:
-        j = 0
-        kp = unclusteredKPs.pop(0)
-        clust = []
-        while j < len(unclusteredKPs):
-            if overlap(kp,unclusteredKPs[j]):
-                clust.append(unclusteredKPs.pop(j))
+        clust = [unclusteredKPs.pop(0)]
+        kp = clust[0]
+        i = 0
+        # print "Cluster %d, i=%d" % (len(cluster),i)
+        # print kp.pt, kp.size//2
+        while i < len(unclusteredKPs):
+            if overlap(kp,unclusteredKPs[i]):
+                # print "Cluster %d, i=%d, d=%d" % (len(cluster),i,diffKP_L2(kp,unclusteredKPs[i]))
+                # print unclusteredKPs[i].pt, unclusteredKPs[i].size//2
+                clust.append(unclusteredKPs.pop(i))
             else:
-                j += 1
-        if clust and len(clust)>=2: cluster.append(Cluster(clust,img))
+                i += 1
+        if len(clust)>=2: cluster.append(Cluster(clust,img))
+        # else: print "Cluster %d discarded" % len(cluster)
 
-    # Draw a broken vertical line at the estimated obstacle horizontal position
-    # newobjsize = sum(kp.size for kp in keypoints)
-    # if newobjsize > 300 and newobjsize > oldobjsize:
-    #     x_obs, y = avgKP(expandingKPs) if expandingKPs else (currFrame.shape[1]//2,currFrame.shape[0]//2)
-    #     cv2.line(dispim, (int(x_obs),scrapY+2), (int(x_obs),currFrame.shape[0]//2-20), (0,255,0), 1)
-    #     cv2.line(dispim, (int(x_obs),currFrame.shape[0]//2+20), (int(x_obs),currFrame.shape[0]-scrapY-2), (0,255,0), 1)
+    newcluster = []
+    while cluster:
+        cl = cluster.pop(0)
+        newclust = cl.KPs
+        i = 0
+        while i < len(cluster):
+            if bboverlap(cl,cluster[i]):
+                newcl = cluster.pop(i)
+                newclust += newcl.KPs
+            else:
+                i += 1
+        newcluster.append(Cluster(newclust,img))
 
-    return cluster
+    # print
+    return newcluster
+
+# def Cluster(keypoints,img):
+#     unclusteredKPs = sorted(keypoints,key=attrgetter('pt'))
+
+#     cluster = [ClusterRecurs(kp[i],keypoints[i+1:]) for i in range(len(unclusteredKPs))]
+        
+    
+
+# def ClusterRecurs(refkp,keypoints):
+#     if len(keypoints) == 0: return []
+
+#     newkp = keypoints[0] if overlap(refkp,keypoints[0]) else refkp
+    
+#     return ClusterRecurs(newkp,keypoints[1:])
 
 
 def estimateKeypointExpansion(queryImg, trainImg, matches, queryKPs, trainKPs
-                              , showMatches=False, dispimg=None, method='corr'):
+                              , showMatches=False, dispimg=None, method='L2'):
     expandingKPs = []
     scale_argmin = []
     ismatch = np.zeros(len(matches),np.bool)
 
-    scalerange = 1.0+np.arange(0.65+0.0125,step=0.0125)
+    scalerange = 1.0+np.arange(0.75+0.0125,step=0.0125)
     res = np.zeros(len(scalerange))
     k = None
     for idx,m in enumerate(matches):
@@ -110,9 +137,9 @@ def estimateKeypointExpansion(queryImg, trainImg, matches, queryKPs, trainKPs
             elif 'L1' in method:
                 res[i] = np.sum(np.abs(scaledquery-scaledtrain))
             elif 'L2' in method:
-                res[i] = np.sum((scaledquery-scaledtrain)**2)
+                res[i] = np.sqrt(np.sum((scaledquery-scaledtrain)**2))
             res[i] /= (scale**2) # normalize over scale
-        if any(np.isnan(res)): continue # could not match the feature
+        if all(np.isnan(res)): continue # could not match the feature
 
         # determine if the min match is acceptable
         res_argmin = np.nanargmin(res)
@@ -153,7 +180,8 @@ def estimateKeypointExpansion(queryImg, trainImg, matches, queryKPs, trainKPs
             
             print
             print "scale_range =", repr(scalerange)[6:-1]
-            print "residuals =", repr((res-np.nanmin(res))/(np.nanmax(res)-np.nanmin(res)))[6:-1]
+            # print "residuals =", repr((res-np.nanmin(res))/(np.nanmax(res)-np.nanmin(res)))[6:-1]
+            print "residuals =", repr(res)[6:-1]
             print "Relative scaling of template:",scalemin
             print "Find next match? ('s' to skip remaining matches,'q' to quit,enter or space to continue):",
             sys.stdout.flush()
@@ -224,7 +252,9 @@ else:
 # start the node and control loop
 rospy.init_node("flownav", anonymous=False)
 
-kbctrl = KeyboardController() if (opts.camtopic == "/ardrone" and not opts.video) else None
+kbctrl = None
+if opts.camtopic == "/ardrone" and not opts.video:
+    kbctrl = KeyboardController(max_speed=0.5,cmd_period=100)
 if kbctrl:
     FlatTrim = rospy.ServiceProxy("/ardrone/flattrim",Empty())
     Calibrate = rospy.ServiceProxy("/ardrone/imu_recalib",Empty())
@@ -374,22 +404,29 @@ while not rospy.is_shutdown():
     #     obstMatches[clsid].age += 1
     #     if obstMatches[clsid].age > 5: del obstMatches[clsid]
 
+    # Draw a broken vertical line at the estimated obstacle horizontal position
+    # newobjsize = sum(kp.size for kp in keypoints)
+    # if newobjsize > 300 and newobjsize > oldobjsize:
+    #     x_obs, y = avgKP(expandingKPs) if expandingKPs else (currFrame.shape[1]//2,currFrame.shape[0]//2)
+    #     cv2.line(dispim, (int(x_obs),scrapY+2), (int(x_obs),currFrame.shape[0]//2-20), (0,255,0), 1)
+    #     cv2.line(dispim, (int(x_obs),currFrame.shape[0]//2+20), (int(x_obs),currFrame.shape[0]-scrapY-2), (0,255,0), 1)
+
+    # Draw all expanding key points (unless it was done already)
+    if not opts.showmatches or lastkey == ord('s'):
+        cv2.drawKeypoints(dispim if dispim is not None else currFrame
+                          , expandingKPs, dispim, color=(0,0,255)
+                          , flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+
     # Synthesize detected obstacle information
     timestep = t_curr-t_last
-    cluster = Synthesize(expandingKPs,currFrame)
+    cluster = ClusterKeypoints(expandingKPs,currFrame)
     t2 = time.time() # end loop timer
 
     if cluster:
         # c = np.argmax([sum(map(attrgetter('detects'),cl.KPs)) for cl in cluster])
         for c in cluster:
-            c.drawBoundingBox(dispim if dispim is not None else currFrame
-                              ,color=(0,255,255),thickness=2)
-
-    # Draw all expanding key points (unless it was done already)
-    if not opts.showmatches:
-        cv2.drawKeypoints(dispim if dispim is not None else currFrame
-                          , expandingKPs, dispim, color=(0,0,255)
-                          , flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+            cv2.rectangle(dispim if dispim is not None else currFrame
+                              ,c.p0,c.p1,color=(0,255,255),thickness=2)
 
     # Print out drone status to the image
     if kbctrl:
@@ -411,7 +448,7 @@ while not rospy.is_shutdown():
            except rospy.ServiceException, e: print e
     elif opts.video:            # video file controls
        if lastkey is not None:
-           k = cv2.waitKey(0)
+           while k not in map(ord,('\r','s','q',' ')): k = cv2.waitKey(100)%256
        if k == ord('m'):
            opts.showmatches ^= True
            if opts.showmatches: cv2.namedWindow(TEMPLATE_WIN,cv2.WINDOW_OPENGL|cv2.WINDOW_NORMAL)

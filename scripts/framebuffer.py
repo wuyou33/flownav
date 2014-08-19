@@ -78,7 +78,7 @@ class ROSCamBuffer(object):
             while self.image is None: None#rospy.sleep(rospy.Duration(secs=0,nsecs=1e3))
         except KeyboardInterrupt:
             raise
-        return self.image, self.msg.header.stamp.to_
+        return self.image, self.msg.header.stamp
 
     def close(self):
         self.image_sub.unregister()
