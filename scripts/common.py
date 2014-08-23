@@ -7,13 +7,16 @@ class KeyPoint(object):
     def __init__(self,kp=None):
         self.detects = 0
         self.age = 0
+        self.scalehist = []
+        self.timehist = []
+
         self.class_id = -1
         self.angle = 0
         self.octave = 0
         self.pt = (0,0)
         self.response = 0
         self.size = 0
-        self.scalehist = []
+
         if kp: copyKP(kp,self)
 
 
@@ -26,6 +29,16 @@ class Cluster(object):
         self.pt = findCoM(self.mask)
         self.p0, self.p1 = BlobBoundingBox(self.mask)
         self.KPs = [KeyPoint(kp) for kp in keypoints]
+        self.cluster_id = -1
+        self.votes = sum(map(attrgetter('detects'),self.KPs))
+        self.detects = np.median(map(attrgetter('detects'),self.KPs))
+        # dist = []
+        # for i in range(len(self.KPs)-1):
+        #     j = i + 1
+        #     while j < len(self.KPs):
+        dist = [diffKP_L2(self.KPs[i],self.KPs[j]) for i in range(len(self.KPs)-1) for j in range(i+1,len(self.KPs))]
+                # j += 1
+        self.density = min(dist)/max(dist)
 
     def __repr__(self):
         return str(map(repr,(self.pt,self.area,len(self.KPs))))
@@ -64,7 +77,9 @@ diffKP_L2 = lambda kp0,kp1: np.sqrt((kp0.pt[0]-kp1.pt[0])**2 + (kp0.pt[1]-kp1.pt
 
 diffKP = lambda kp0,kp1: (kp0.pt[0]-kp1.pt[0], kp0.pt[1]-kp1.pt[1])
 
-difftuple = lambda p0,p1: np.sqrt((p0[0]-p1[0])**2 + (p0[1]-p1[1])**2)
+difftuple_L2 = lambda p0,p1: np.sqrt((p0[0]-p1[0])**2 + (p0[1]-p1[1])**2)
+
+difftuple = lambda p0,p1: (p1[0]-p0[0],p1[1]-p0[1])
 
 inttuple = lambda *x: tuple(map(int,x))
 
@@ -72,8 +87,10 @@ roundtuple = lambda *x: tuple(map(int,map(round,x)))
 
 avgKP = lambda keypoints: map(lambda x: sum(x)/len(keypoints),zip(*map(attrgetter('pt'),keypoints)))
 
+toKeyPoint_cv = lambda kp: cv2.KeyPoint(kp.pt[0],kp.pt[1],kp.size,_angle=kp.angle,_response=kp.response,_octave=kp.octave,_class_id=kp.class_id)
+
 def reprObj(obj):
-    return "\n".join(["%s = %s" % (attr, getattr(obj, attr)) for attr in dir(obj) if not attr.startswith('_')])
+    return "\n".join(["%s = %s" % (attr, getattr(obj, attr)) for attr in dir(obj) if not attr.startswith('_') and not callable(getattr(src,attr))])
 
 def cvtIdx(pt,shape):
     return int(pt[1]*shape[1] + pt[0]) if hasattr(pt, '__len__') else map(int, (pt%shape[1], pt//shape[1]))
@@ -85,6 +102,6 @@ def drawInto(src, dst, tl=(0,0)):
 def copyKP(src,dst=None):
     if dst is None: dst = KeyPoint()
     for attr in dir(src):
-        if not attr.startswith('_'):
+        if not attr.startswith('_') and not callable(getattr(src,attr)):
             setattr(dst,attr,getattr(src,attr))
     return dst
