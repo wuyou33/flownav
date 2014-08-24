@@ -2,22 +2,20 @@ import numpy as np
 import cv2
 from operator import attrgetter
 
-
-class KeyPoint(object):
-    def __init__(self,kp=None):
-        self.detects = 0
+class KeyPointHistory(object):
+    def __init__(self):
         self.age = 0
+        self.lastFrameIdx = -1
+        self.detects = 0
         self.scalehist = []
         self.timehist = []
 
-        self.class_id = -1
-        self.angle = 0
-        self.octave = 0
-        self.pt = (0,0)
-        self.response = 0
-        self.size = 0
-
-        if kp: copyKP(kp,self)
+    def update(self,t0,t1,scale):
+        self.age = 0
+        self.lastFrameIdx = -1
+        self.detects += 1
+        self.scalehist.append(scale)
+        self.timehist.append((t0,t1))
 
 
 class Cluster(object):
@@ -100,7 +98,7 @@ def drawInto(src, dst, tl=(0,0)):
     dst[tl[1]:tl[1]+src.shape[0], tl[0]:tl[0]+src.shape[1]] = src
 
 def copyKP(src,dst=None):
-    if dst is None: dst = KeyPoint()
+    if dst is None: dst = cv2.KeyPoint()
     for attr in dir(src):
         if not attr.startswith('_') and not callable(getattr(src,attr)):
             setattr(dst,attr,getattr(src,attr))
