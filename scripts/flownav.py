@@ -77,6 +77,8 @@ def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist
     k = None
     skipMatches = False
 
+    if showMatches and dispimg is not None: tdispim = dispimg.copy()
+
     trainImg = frmbuf.grab(0)[0]
     for idx,m in enumerate(matches):
         qkp = queryKPs[m.queryIdx]
@@ -134,64 +136,63 @@ def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist
         # determine if the min match is acceptable
         res_argmin = np.nanargmin(res)
         scalemin = scalerange[res_argmin]
-        # print res[res_argmin]/res[0]
-        # print scalemin
-        # print
-        if scalemin > 1.2 and res[res_argmin] < 0.8*res[0]:
+        print res[res_argmin]/res[0]
+        print scalemin
+        print
+        if scalemin > 1.2 and res[res_argmin] < 0.6*res[0]:
             expandingKPs.append(tkp)
             scale_argmin.append(scalemin)
             matchidx.append(idx)
 
-            # if fidx < -1: showMatches = True
-            if not showMatches: continue
-            cv2.drawKeypoints(dispimg,[toKeyPoint_cv(trainKPs[m.trainIdx])], dispimg, color=(0,0,255)
-                              ,flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-            if skipMatches:     continue
+        if not showMatches: continue
             
-            # recalculate the best matching scaled template
-            # r = qkp.size*scalemin*1.2/9*20 // 2
-            r = qkp.size*scalemin // 2
-            x0,y0 = trunc_coords(trainpatch.shape,(x_tkp-r, y_tkp-r))
-            x1,y1 = trunc_coords(trainpatch.shape,(x_tkp+r, y_tkp+r))
-            scaledtrain = trainpatch[y0:y1, x0:x1]
-            scaledquery = cv2.resize(querypatch, scaledtrain.shape[::-1]
-                                     , fx=scalemin, fy=scalemin
-                                     , interpolation=cv2.INTER_LINEAR)
+        # recalculate the best matching scaled template
+        # r = qkp.size*scalemin*1.2/9*20 // 2
+        r = qkp.size*scalemin // 2
+        x0,y0 = trunc_coords(trainpatch.shape,(x_tkp-r, y_tkp-r))
+        x1,y1 = trunc_coords(trainpatch.shape,(x_tkp+r, y_tkp+r))
+        scaledtrain = trainpatch[y0:y1, x0:x1]
+        scaledquery = cv2.resize(querypatch, scaledtrain.shape[::-1]
+                                 , fx=scalemin, fy=scalemin
+                                 , interpolation=cv2.INTER_LINEAR)
 
-            # draw the query patch, the best matching scaled patch and the
-            # training patch
-            templimg = np.zeros((scaledquery.shape[0]
-                                 ,scaledquery.shape[1]+scaledtrain.shape[1]+querypatch.shape[1])
-                                , dtype=trainImg.dtype) + 255
+        # draw the query patch, the best matching scaled patch and the
+        # training patch
+        templimg = np.zeros((scaledquery.shape[0]
+                             ,scaledquery.shape[1]+scaledtrain.shape[1]+querypatch.shape[1])
+                            , dtype=trainImg.dtype) + 255
 
-            # scale values for display
-            querypatch = 255.*(querypatch - np.min(querypatch))/(np.max(querypatch) - np.min(querypatch))
-            scaledtrain = 255.*(scaledtrain - np.min(scaledtrain))/(np.max(scaledtrain) - np.min(scaledtrain))
-            scaledquery = 255.*(scaledquery - np.min(scaledquery))/(np.max(scaledquery) - np.min(scaledquery))
+        # scale values for display
+        querypatch = 255.*(querypatch - np.min(querypatch))/(np.max(querypatch) - np.min(querypatch))
+        scaledtrain = 255.*(scaledtrain - np.min(scaledtrain))/(np.max(scaledtrain) - np.min(scaledtrain))
+        scaledquery = 255.*(scaledquery - np.min(scaledquery))/(np.max(scaledquery) - np.min(scaledquery))
 
-            drawInto(querypatch, templimg)
-            drawInto(scaledquery,templimg,tl=(querypatch.shape[1],0))
-            drawInto(scaledtrain,templimg,tl=(querypatch.shape[1]+scaledquery.shape[1],0))
-            
-            print
-            print "scale_range =", repr(scalerange)[6:-1]
-            # print "residuals =", repr((res-np.nanmin(res))/(np.nanmax(res)-np.nanmin(res)))[6:-1]
-            print "residuals =", repr(res)[6:-1]
-            print "Number of detects:", kphist[qkp.class_id].detects+1 if qkp.class_id in kphist else 1
-            print "Frames since last match:", abs(fidx)
-            print "Template size =", querypatch.shape
-            print "Relative scaling of template:",scalemin
-            print "Find next match? ('s' to skip remaining matches,'q' to quit,enter or space to continue):",
-            sys.stdout.flush()
+        drawInto(querypatch, templimg)
+        drawInto(scaledquery,templimg,tl=(querypatch.shape[1],0))
+        drawInto(scaledtrain,templimg,tl=(querypatch.shape[1]+scaledquery.shape[1],0))
 
-            global gmain_win
-            cv2.imshow(TEMPLATE_WIN, templimg)
-            cv2.imshow(gmain_win, dispimg)
+        cv2.drawKeypoints(dispimg,[tkp], tdispim, color=(0,0,255)
+                          ,flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
-            k = cv2.waitKey(100)%256
-            while k not in map(ord,('\r','s','q',' ')): k = cv2.waitKey(100)%256
-            if k == ord('s'): skipMatches = True
-            elif k == ord('q'): raise SystemExit
+        print
+        print "scale_range =", repr(scalerange)[6:-1]
+        # print "residuals =", repr((res-np.nanmin(res))/(np.nanmax(res)-np.nanmin(res)))[6:-1]
+        print "residuals =", repr(res)[6:-1]
+        print "Number of detects:", kphist[qkp.class_id].detects+1 if qkp.class_id in kphist else 1
+        print "Frames since last match:", abs(fidx)
+        print "Template size =", querypatch.shape
+        print "Relative scaling of template:",scalemin
+        print "Find next match? ('s' to skip remaining matches,'q' to quit,enter or space to continue):",
+        sys.stdout.flush()
+
+        global gmain_win
+        cv2.imshow(TEMPLATE_WIN, templimg)
+        cv2.imshow(gmain_win, tdispim)
+
+        k = cv2.waitKey(100)%256
+        while k not in map(ord,('\r','s','q',' ')): k = cv2.waitKey(100)%256
+        if k == ord('s'): showMatches = False
+        elif k == ord('q'): raise SystemExit
 
     return expandingKPs, scale_argmin, matchidx, k
 
@@ -350,14 +351,15 @@ while not rospy.is_shutdown():
 
     # filter out poor matches by ratio test , maximum (descriptor) distance
     matches = [m[0] for m in matches
-               if ((len(m)==2 and m[0].distance < 0.8*m[1].distance) or (len(m)==1))
-               and m[0].distance < 0.25]
+               if ((len(m)==2 and m[0].distance < 0.6*m[1].distance) or (len(m)==1))]
+               # and m[0].distance < 0.25]
 
     # filter out matches with outlier spatial distances
     mdist = stats.trim1([diffKP_L2(p0,p1) for p0,p1 in map(getMatchKPs,matches)],0.1)
     if mdist.size:
         threshdist = np.mean(mdist) + 2*np.std(mdist)
-        matches = [m for m in matches if diffKP_L2(*getMatchKPs(m)) < threshdist]
+        matches = [m for m in matches
+                   if diffKP_L2(*getMatchKPs(m)) < threshdist]
 
     # Draw matches
     dispim = None
@@ -423,31 +425,39 @@ while not rospy.is_shutdown():
             else:
                 tdesc = np.r_[tdesc,trackedDesc[clsid].reshape(1,-1)]
 
-    # Synthesize detected obstacle information
-    # cluster = ClusterKeypoints(found,currFrame)
-    # cluster = MergeClusters(cluster,currFrame)
     t2 = time.time() # end loop timer
 
     if expandingKPs:
         for kp in expandingKPs:
-            scales = np.array(keypointHist[kp.class_id].scalehist)
-            tdiffs = np.array([t1-t0 for t0,t1 in keypointHist[kp.class_id].timehist])
-            ttchist = tdiffs / (scales - 1)
             clustinfo = "(%d,%.2f)" % (keypointHist[kp.class_id].detects,keypointHist[kp.class_id].scalehist[-1])
             cv2.putText(dispim,clustinfo,inttuple(kp.pt[0]+kp.size//2,kp.pt[1]-kp.size//2)
                         ,cv2.FONT_HERSHEY_TRIPLEX, 0.4, (255,255,0))
 
-    # if cluster and not opts.nodraw:
-    #     c = np.argmax([cl.votes for cl in cluster])
-    #     # for c in cluster:
-    #     c = cluster[c]
-    #     kp = c.KPs[np.argmax([kp.detects for kp in c.KPs])]
-    #     print kp.scalehist
+    if not opts.nodraw:
+        cv2.drawKeypoints(dispim, expandingKPs, dispim, color=(0,0,255)
+                          , flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
-    #     clustinfo = "(%d,%.2f)" % (c.votes,c.density)
-    #     cv2.rectangle(dispim,c.p0,c.p1,color=(0,255,255),thickness=2)
-    #     cv2.putText(dispim,clustinfo,(c.p1[0],c.p0[1])
-    #                 ,cv2.FONT_HERSHEY_TRIPLEX, 0.65, (0,0,255))        
+    cluster = ClusterKeypoints(expandingKPs,currFrame)
+    # cluster = MergeClusters(cluster,currFrame)
+    if cluster and not opts.nodraw:
+        c = np.argmin([max(cl.dist) for cl in cluster])
+        c = cluster[c]
+
+        votes = 0
+        ttc = []
+        for kp in c.KPs:
+            votes += keypointHist[kp.class_id].detects
+            kttc = []
+            for (t0,t1),scale in zip(keypointHist[kp.class_id].timehist,keypointHist[kp.class_id].scalehist):
+                kttc.append((t1-t0)/(scale-1))
+            ttc.append(np.mean(kttc))
+
+        ttc = np.mean(ttc) / 1000.
+
+        clustinfo = "(%d,%.2f)" % (votes,ttc)
+        cv2.rectangle(dispim,c.p0,c.p1,color=(0,255,255),thickness=2)
+        cv2.putText(dispim,clustinfo,(c.p1[0]-5,c.p1[1])
+                    ,cv2.FONT_HERSHEY_TRIPLEX, 0.4, (0,0,255))        
 
     # Draw a broken vertical line at the estimated obstacle horizontal position
     # newobjsize = sum(kp.size for kp in keypoints)
@@ -455,11 +465,6 @@ while not rospy.is_shutdown():
     #     x_obs, y = avgKP(expandingKPs) if expandingKPs else (currFrame.shape[1]//2,currFrame.shape[0]//2)
     #     cv2.line(dispim, (int(x_obs),scrapY+2), (int(x_obs),currFrame.shape[0]//2-20), (0,255,0), 1)
     #     cv2.line(dispim, (int(x_obs),currFrame.shape[0]//2+20), (int(x_obs),currFrame.shape[0]-scrapY-2), (0,255,0), 1)
-
-    # Draw all expanding key points (unless it was done already)
-    if not opts.showmatches and not opts.nodraw:
-        cv2.drawKeypoints(dispim, expandingKPs, dispim, color=(0,0,255)
-                          , flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
     # Print out drone status to the image
     if kbctrl:

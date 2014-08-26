@@ -26,17 +26,9 @@ class Cluster(object):
         self.area = np.sum(self.mask)
         self.pt = findCoM(self.mask)
         self.p0, self.p1 = BlobBoundingBox(self.mask)
-        self.KPs = [KeyPoint(kp) for kp in keypoints]
+        self.KPs = list(keypoints)
         self.cluster_id = -1
-        self.votes = sum(map(attrgetter('detects'),self.KPs))
-        self.detects = np.median(map(attrgetter('detects'),self.KPs))
-        # dist = []
-        # for i in range(len(self.KPs)-1):
-        #     j = i + 1
-        #     while j < len(self.KPs):
-        dist = [diffKP_L2(self.KPs[i],self.KPs[j]) for i in range(len(self.KPs)-1) for j in range(i+1,len(self.KPs))]
-                # j += 1
-        self.density = min(dist)/max(dist)
+        self.dist = [diffKP_L2(self.KPs[i],self.KPs[j]) for i in range(len(self.KPs)-1) for j in range(i+1,len(self.KPs))]
 
     def __repr__(self):
         return str(map(repr,(self.pt,self.area,len(self.KPs))))
