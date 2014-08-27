@@ -2,15 +2,31 @@
 
 This project implements an interpretation of the algorithm developed by Mori and Scherer (paper [here](https://www-preview.ri.cmu.edu/pub_files/2013/5/monocularObstacleAvoidance.pdf)) for frontal obstacle detection using expansion cues from a monocular camera. The project code is integrated into the Robot Operating System architecture (ROS), allowing for a modular design that combines several components into a distributed framework.
 
-## Assumptions
+## Assumptions for Obstacle Avoidance
 
-+ If we assume a rectangular coordinate system we can represent a scene by having the origin at the drone's location and moving with constant velocity along the axis which we designate to be along the drone's trajectory.
++ Assume a rectangular coordinate system with whose origin is located the AR
+Drone's frontal camera image plane. The horizontal and vertical axes
+of the image plane define the X and Y axes and the Z axis is orthogonal to the image
+plane pointing towards the front of the drone.
 
-+ Pose and trajectory are known via IMU. In particular, velocity and position are known.
++ The drone moves along the Z-axis at a constant velocity with angular
+velocities being negligible.
 
-+ Obstacles are static / motion is dominated by camera motion.
++ Obstacles are static or motion is dominated by camera motion.
 
-+ Obstacles are sufficiently textured
++ Obstacles are sufficiently textured to be reliably detected by SURF algorithm.
+
+## Derivation
+
+The rate of change of scale of an object measured between two image frames is
+inversely related the distance to the object. Assuming that the drone is headed
+straight towards a point on an obstacle, we can estimate the Time to Contact
+(TTC) with an object using only the rate of change in scale of an obstacle and
+the time interval between two frames. Figure 1 below shows the derivation of
+this relationship assuming the the pinhole camera model.
+
+![Estimating TTC](ttc_diagram.png "Estimating TTC")
+
 
 ## Related works
 
