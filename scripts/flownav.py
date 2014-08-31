@@ -16,12 +16,14 @@ import time,sys
 
 
 TEMPLATE_WIN = "Template matching"
-MIN_THRESH = 500
+MIN_THRESH = 2000
 MAX_THRESH = 2500
 MAX_AGE = 8
-TARGET_N_KP = 100
+TARGET_N_KP = 50
 
 gmain_win = "flownav"
+
+VERBOSE = 1
 
 def React(controller,img,timediff):
     v = controller.navdata.vx
@@ -32,7 +34,7 @@ def React(controller,img,timediff):
         if x_obs >= img.shape[1]//2: self.RollLeft()
 
 
-def ClusterKeypoints(keypoints,img):
+def ClusterKeypoints(keypoints,kphist,img):
     if len(keypoints) < 2: return []
 
     cluster = []
@@ -46,7 +48,8 @@ def ClusterKeypoints(keypoints,img):
                 clust.append(unclusteredKPs.pop(i))
             else:
                 i += 1
-        if len(clust)>=2: cluster.append(Cluster(clust,img))
+        if len(clust) > 1 and sum(len(kphist[kp.class_id].scalehist) for kp in clust) > 1:
+            cluster.append(Cluster(clust,img))
 
     return cluster
 
@@ -67,20 +70,20 @@ def MergeClusters(clusters,img):
 
 
 def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist
-                              , showMatches=False, dispimg=None, method='L2sq'):
-    expandingKPs = []
+                              , showMatches=False, dispimg=None, method='L1'):
     scale_argmin = []
-    matchidx = []
+    expandingMatches = []
 
     scalerange = 1.0+np.arange(0.5+0.0125,step=0.0125)
     res = np.zeros(len(scalerange))
     k = None
     skipMatches = False
 
-    if showMatches and dispimg is not None: tdispim = dispimg.copy()
+    if showMatches:
+        tdispim = dispimg.copy() if dispimg is not None else frmbuf.grab(0)[0].copy()
 
     trainImg = frmbuf.grab(0)[0]
-    for idx,m in enumerate(matches):
+    for m in matches:
         qkp = queryKPs[m.queryIdx]
         tkp = trainKPs[m.trainIdx]
 
@@ -99,7 +102,7 @@ def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist
         querypatch = (querypatch-np.mean(querypatch))/np.std(querypatch)
 
         x_tkp,y_tkp = tkp.pt
-        # r = qkp.size*scalerange[-1]*1.2/9*20 // 2        
+        # r = qkp.size*scalerange[-1]*1.2/9*20 // 2
         r = qkp.size*scalerange[-1] // 2
         x0,y0 = trunc_coords(trainImg.shape,(x_tkp-r, y_tkp-r))
         x1,y1 = trunc_coords(trainImg.shape,(x_tkp+r, y_tkp+r))
@@ -136,65 +139,65 @@ def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist
         # determine if the min match is acceptable
         res_argmin = np.nanargmin(res)
         scalemin = scalerange[res_argmin]
-        print res[res_argmin]/res[0]
-        print scalemin
-        print
-        if scalemin > 1.2 and res[res_argmin] < 0.6*res[0]:
-            expandingKPs.append(tkp)
+        if scalemin > 1.2 and res[res_argmin] < 0.8*res[0]:
             scale_argmin.append(scalemin)
-            matchidx.append(idx)
+            expandingMatches.append(m)
 
-        if not showMatches: continue
-            
-        # recalculate the best matching scaled template
-        # r = qkp.size*scalemin*1.2/9*20 // 2
-        r = qkp.size*scalemin // 2
-        x0,y0 = trunc_coords(trainpatch.shape,(x_tkp-r, y_tkp-r))
-        x1,y1 = trunc_coords(trainpatch.shape,(x_tkp+r, y_tkp+r))
-        scaledtrain = trainpatch[y0:y1, x0:x1]
-        scaledquery = cv2.resize(querypatch, scaledtrain.shape[::-1]
-                                 , fx=scalemin, fy=scalemin
-                                 , interpolation=cv2.INTER_LINEAR)
+            if not showMatches: continue
 
-        # draw the query patch, the best matching scaled patch and the
-        # training patch
-        templimg = np.zeros((scaledquery.shape[0]
-                             ,scaledquery.shape[1]+scaledtrain.shape[1]+querypatch.shape[1])
-                            , dtype=trainImg.dtype) + 255
+            # recalculate the best matching scaled template
+            # r = qkp.size*scalemin*1.2/9*20 // 2
+            r = qkp.size*scalemin // 2
+            x0,y0 = trunc_coords(trainpatch.shape,(x_tkp-r, y_tkp-r))
+            x1,y1 = trunc_coords(trainpatch.shape,(x_tkp+r, y_tkp+r))
+            scaledtrain = trainpatch[y0:y1, x0:x1]
+            scaledquery = cv2.resize(querypatch, scaledtrain.shape[::-1]
+                                     , fx=scalemin, fy=scalemin
+                                     , interpolation=cv2.INTER_LINEAR)
 
-        # scale values for display
-        querypatch = 255.*(querypatch - np.min(querypatch))/(np.max(querypatch) - np.min(querypatch))
-        scaledtrain = 255.*(scaledtrain - np.min(scaledtrain))/(np.max(scaledtrain) - np.min(scaledtrain))
-        scaledquery = 255.*(scaledquery - np.min(scaledquery))/(np.max(scaledquery) - np.min(scaledquery))
+            # draw the query patch, the best matching scaled patch and the
+            # training patch
+            templimg = np.zeros((scaledquery.shape[0]
+                                 ,scaledquery.shape[1]+scaledtrain.shape[1]+querypatch.shape[1])
+                                , dtype=trainImg.dtype) + 255
 
-        drawInto(querypatch, templimg)
-        drawInto(scaledquery,templimg,tl=(querypatch.shape[1],0))
-        drawInto(scaledtrain,templimg,tl=(querypatch.shape[1]+scaledquery.shape[1],0))
+            # scale values for display
+            querypatch = 255.*(querypatch - np.min(querypatch))/(np.max(querypatch) - np.min(querypatch))
+            scaledtrain = 255.*(scaledtrain - np.min(scaledtrain))/(np.max(scaledtrain) - np.min(scaledtrain))
+            scaledquery = 255.*(scaledquery - np.min(scaledquery))/(np.max(scaledquery) - np.min(scaledquery))
 
-        cv2.drawKeypoints(dispimg,[tkp], tdispim, color=(0,0,255)
-                          ,flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+            drawInto(querypatch, templimg)
+            drawInto(scaledquery,templimg,tl=(querypatch.shape[1],0))
+            drawInto(scaledtrain,templimg,tl=(querypatch.shape[1]+scaledquery.shape[1],0))
 
-        print
-        print "scale_range =", repr(scalerange)[6:-1]
-        # print "residuals =", repr((res-np.nanmin(res))/(np.nanmax(res)-np.nanmin(res)))[6:-1]
-        print "residuals =", repr(res)[6:-1]
-        print "Number of detects:", kphist[qkp.class_id].detects+1 if qkp.class_id in kphist else 1
-        print "Frames since last match:", abs(fidx)
-        print "Template size =", querypatch.shape
-        print "Relative scaling of template:",scalemin
-        print "Find next match? ('s' to skip remaining matches,'q' to quit,enter or space to continue):",
-        sys.stdout.flush()
+            cv2.drawKeypoints(tdispim,[tkp], tdispim, color=(0,0,255)
+                              ,flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
-        global gmain_win
-        cv2.imshow(TEMPLATE_WIN, templimg)
-        cv2.imshow(gmain_win, tdispim)
+            if VERBOSE > 1:
+                print
+                print "class_id:",qkp.class_id
+                print "scale_range =", repr(scalerange)[6:-1]
+                # print "residuals =", repr((res-np.nanmin(res))/(np.nanmax(res)-np.nanmin(res)))[6:-1]
+                print "residuals =", repr(res)[6:-1]
+                print "Number of previous detects:", kphist[qkp.class_id].detects if qkp.class_id in kphist else 0
+                # print "Number of previous scale estimates:", len(kphist[qkp.class_id].scalehist) if qkp.class_id in kphist else 1
+                print "Frames since last detect:", abs(fidx)
+                # print "Frames since first detect:", kphist[qkp.class_id].age+1 if qkp.class_id in kphist else 1
+                print "Template size =", querypatch.shape
+                print "Relative scaling of template:",scalemin
+                print "Find next match? ('s' to skip remaining matches,'q' to quit,enter or space to continue):",
+                sys.stdout.flush()
 
-        k = cv2.waitKey(100)%256
-        while k not in map(ord,('\r','s','q',' ')): k = cv2.waitKey(100)%256
-        if k == ord('s'): showMatches = False
-        elif k == ord('q'): raise SystemExit
+            global gmain_win
+            cv2.imshow(TEMPLATE_WIN, templimg)
+            cv2.imshow(gmain_win, tdispim)
 
-    return expandingKPs, scale_argmin, matchidx, k
+            k = cv2.waitKey(100)%256
+            while k not in map(ord,('\r','s','q',' ')): k = cv2.waitKey(100)%256
+            if k == ord('s'): showMatches = False
+            elif k == ord('q'): raise SystemExit
+
+    return expandingMatches, scale_argmin, k
 
 
 def generateuniqid():
@@ -212,32 +215,54 @@ from subprocess import Popen
  
 parser = optparse.OptionParser(usage="flownav.py [options]")
 parser.add_option("-b", "--bag", dest="bag", default=None
-                  , help="Use feed from a ROS bagged recording.")
+                  , help="Use feed from a ROS bagged recording. (don't)")
+
+# parser.add_option("-l", "--log", dest="log", default=None
+#                   , help="Specify where to output intermediate analysis results. (don't)")
+
 parser.add_option("--threshold", dest="threshold", type=float, default=1500.
-                  , help="Use feed from a ROS bagged recording.")
+                  , help="Set the Hessian threshold for keypoint detection.")
+
 parser.add_option("-m", "--draw-scale-match", dest="showmatches"
                   , action="store_true", default=False
                   , help="Show scale matches for each expanding keypoint.")
+
+parser.add_option("-v", "--verbose", dest="verbose", action="count", default=1
+                  , help="Print verbose output to stdout. Multiple v's for more verbosity.")
+
+parser.add_option("-q", "--quiet", dest="quiet", default=False
+                  , help="Quiet all output to stdout.")
+
 parser.add_option("--no-draw", dest="nodraw"
                   , action="store_true", default=False
                   , help="Draw keypoints and their matches.")
+
 parser.add_option("--video-topic", dest="camtopic", default="/ardrone"
                   , help="Specify the topic for camera feed (default='/ardrone').")
+
 parser.add_option("--video-file", dest="video", default=None
                   , help="Load a video file to test or specify camera ID (typically 0).")
+
 parser.add_option("-r","--record-video", dest="record", default=None
                   , help="Record session to video file.")
+
 parser.add_option("--start", dest="start"
                   , type="int", default=0
                   , help="Starting frame number for video file analysis.")
+
 parser.add_option("--stop", dest="stop"
                   , type="int", default=None
                   , help="Stop frame number for analysis.")
+
 (opts, args) = parser.parse_args()
+
+VERBOSE = 0 if opts.quiet else opts.verbose
 
 if opts.bag:
     DEVNULL = open(os.devnull, 'wb')
     bagp = Popen(["rosbag","play",opts.bag],stdout=DEVNULL,stderr=DEVNULL)
+
+# logger = open(opts.log,'wb') if opts.log else None
 
 video_writer = opts.record
 
@@ -261,38 +286,38 @@ else:
     FlatTrim = lambda : None
     Calibrate = lambda : None    
 
-#------------------------------------------------------------------------------#
-# Print intro output to user
-#------------------------------------------------------------------------------#
-print "Options"
-print "-"*len("Options")
-print "- Subscribed to", (repr(opts.camtopic) if not opts.video else opts.video)
-print "- Hessian threshold set at", repr(opts.threshold)
-print
-
-print "-"*40
 gmain_win = frmbuf.name
 cv2.namedWindow(gmain_win, flags=cv2.WINDOW_OPENGL|cv2.WINDOW_NORMAL)
 if opts.showmatches: cv2.namedWindow(TEMPLATE_WIN, flags=cv2.WINDOW_OPENGL|cv2.WINDOW_NORMAL)
 print "-"*40
 print
 
-if kbctrl:
-    print "Keyboard Controls for automated controller"
-    print "-"*len("Keyboard Controls for automated controller")
-    for k,v in CharMap.items():
-        print k.ljust(20),'=',repr(v).ljust(5)
+#------------------------------------------------------------------------------#
+# Print intro output to user
+#------------------------------------------------------------------------------#
+if VERBOSE:
+    print "Options"
+    print "-"*len("Options")
+    print "- Subscribed to", (repr(opts.camtopic) if not opts.video else opts.video)
+    print "- Hessian threshold set at", repr(opts.threshold)
     print
 
-print "Additional controls"
-print "-"*len("Additional controls")
-print "* Press 'q' at any time to quit"
-print "* Press 'd' at any time to toggle keypoint drawing"
-if opts.video:
-    print "* Press 'm' at any time to toggle scale matching drawing"
-if kbctrl:
-    print "* Press 'f' while drone is landed and level to perform a flat trim"
-    print "* Press 'c' when drone is in a stable hover to recalibrate drone's IMU"
+    if kbctrl:
+        print "Keyboard Controls for automated controller"
+        print "-"*len("Keyboard Controls for automated controller")
+        for k,v in CharMap.items():
+            print k.ljust(20),'=',repr(v).ljust(5)
+        print
+
+    print "Additional controls"
+    print "-"*len("Additional controls")
+    print "* Press 'q' at any time to quit"
+    print "* Press 'd' at any time to toggle keypoint drawing"
+    if opts.video:
+        print "* Press 'm' at any time to toggle scale matching drawing"
+    if kbctrl:
+        print "* Press 'f' while drone is landed and level to perform a flat trim"
+        print "* Press 'c' when drone is in a stable hover to recalibrate drone's IMU"
 
 #------------------------------------------------------------------------------#
 # additional setup before main loop
@@ -330,122 +355,149 @@ keypointHist = OrderedDict()
 errsum = 0
 while not rospy.is_shutdown():
     currFrame, t_curr = frmbuf.grab()
-    t1 = time.time() # loop timer
+    t1_loop = time.time() # loop timer
     if not currFrame.size: break
-    
-    # /* Find keypoint matches for this frame and filter them */ #
 
-    # get keypoints and feature descriptors from training image
-    trainKP, tdesc = surf_ui.detectAndCompute(currFrame,roi)
+    if VERBOSE > 2: print "Frame time: %8.3f ms" % t_curr
 
-    # attempt to adaptively threshold
+    '''
+    First, assign _every_ query keypoint a unique ID
+    Note: 1 and -1 are the openCV default class_ids
+    '''
+    # # attempt to adaptively threshold
     # err = len(trainKP)-TARGET_N_KP
-    # surf_ui.hessianThreshold += 0.3*(err) + 0.15*(errsum+err)
+    # surf_ui.hessianThreshold += 0.3*(err) + 0.05*(errsum+err)
     # if surf_ui.hessianThreshold < MIN_THRESH: surf_ui.hessianThreshold = MIN_THRESH
-    # elif surf_ui.hessianThreshold > MAX_THRESH: surf_ui.hessianThreshold = MAX_THRESH
+    # # elif surf_ui.hessianThreshold > MAX_THRESH: surf_ui.hessianThreshold = MAX_THRESH
     # errsum = len(trainKP)-TARGET_N_KP
 
-    # find the best K matches for each keypoint
+    '''
+    Now, define a one to one mapping to the training keypoints
+    '''
+    trainKP, tdesc = surf_ui.detectAndCompute(currFrame,roi)
+
+    # Find the best K matches for each keypoint
     if qdesc is None or tdesc is None: matches = []
     else:                              matches = bfmatcher.knnMatch(qdesc,tdesc,k=2)
 
-    # filter out poor matches by ratio test , maximum (descriptor) distance
+    # Filter out poor matches by ratio test , maximum (descriptor) distance
     matches = [m[0] for m in matches
-               if ((len(m)==2 and m[0].distance < 0.6*m[1].distance) or (len(m)==1))]
-               # and m[0].distance < 0.25]
+               if ((len(m)==2 and m[0].distance < 0.6*m[1].distance) or (len(m)==1))
+               and m[0].distance < 0.25]
 
-    # filter out matches with outlier spatial distances
+    # Filter out matches with outlier spatial distances
     mdist = stats.trim1([diffKP_L2(p0,p1) for p0,p1 in map(getMatchKPs,matches)],0.1)
     if mdist.size:
         threshdist = np.mean(mdist) + 2*np.std(mdist)
-        matches = [m for m in matches
-                   if diffKP_L2(*getMatchKPs(m)) < threshdist]
+        matches = [m for m in matches if diffKP_L2(*getMatchKPs(m)) < threshdist]
 
     # Draw matches
     dispim = None
     if not opts.nodraw:
         matchKPs = [getMatchKPs(m) for m in matches]
         mkp1, mkp2 = zip(*matchKPs) if matchKPs else ([],[])
-        dispim = cv2.drawKeypoints(currFrame,mkp1+mkp2, None, color=(255,0,0))
-        map(lambda p: cv2.line(dispim, inttuple(*p[0].pt), inttuple(*p[1].pt), (0,255,0), 2), matchKPs)
+        dispim = cv2.drawKeypoints(currFrame,mkp1, None, color=(0,255,0))
+        cv2.drawKeypoints(dispim, mkp2, dispim, color=(255,0,0))
+        map(lambda p: cv2.line(dispim, inttuple(*p[0].pt), inttuple(*p[1].pt), (0,255,0), 1), matchKPs)
         cv2.rectangle(dispim,(scrapX,scrapY)
                       ,(currFrame.shape[1]-scrapX,currFrame.shape[0]-scrapY)
                       ,(192,192,192),thickness=2)
 
-    # /* Find expanding keypoints */ #
+    if np.mean(mdist) > 10:
+        print "Optical flow velocity exceeded"
+        print np.mean(mdist)
+        matches = []
+
+    '''
+    Find an estimate of the scale change for keypoints that are expanding
+    '''
     matches = [m for m in matches if trainKP[m.trainIdx].size > queryKP[m.queryIdx].size]
 
-    # Assign all detected keypoints a unique class ID or the class ID of a past
-    # matching keypoint if it has one
-    for m in matches:
-        # carry over the class_id
-        if queryKP[m.queryIdx].class_id in trackedKPs:
-            class_id = queryKP[m.queryIdx].class_id
-            trainKP[m.trainIdx].class_id = class_id
-        else: # found a newly detected expanding KP
-            class_id = getuniqid()
-            trainKP[m.trainIdx].class_id = class_id
-            queryKP[m.queryIdx].class_id = class_id
-        
-    expandingMatches = estimateKeypointExpansion(frmbuf, matches
-                                                 , queryKP, trainKP, keypointHist
-                                                 , opts.showmatches, dispim)
-    expandingKPs, kpscales, matchidx, lastkey = expandingMatches
+    matches, kpscales, lastkey = estimateKeypointExpansion(frmbuf, matches
+                                                           , queryKP, trainKP, keypointHist
+                                                           , opts.showmatches, dispim)
+    expandingKPs = [trainKP[m.trainIdx] for m in matches]
 
     # update matched expanding keypoints with accurate scale
+    # carry over keypoint class ids and update the descriptor
     matchIDs = []
-    for i in range(len(expandingKPs)):
-        m = matches[matchidx[i]]
-        clsid = expandingKPs[i].class_id
+    for m,scale in zip(matches,kpscales):
+        clsid = queryKP[m.queryIdx].class_id
 
-        if clsid in keypointHist:
-            t0 = keypointHist[clsid].timehist[-1][-1]
-        else:
-            t0 = t_last
+        if clsid in (-1,1): # keypoint hasn't been assigned an ID
+            clsid = getuniqid()
             keypointHist[clsid] = KeyPointHistory()
+            
+        trainKP[m.trainIdx].class_id = clsid
 
-        keypointHist[clsid].update(t0,t_curr,kpscales[i])
-        trackedKPs[clsid] = trainKP[m.trainIdx]
-        trackedDesc[clsid] = tdesc[m.trainIdx]
+        if len(keypointHist[clsid].timehist) != 0:
+            t_A = keypointHist[clsid].timehist[-1][-1]
+        else:
+            t_A = t_last
+
+        # save the keypoint data
+        trackedKPs[clsid] = copyKP(trainKP[m.trainIdx])
+        trackedDesc[clsid] = tdesc[m.trainIdx].copy()
+        keypointHist[clsid].update(t_A,t_curr,scale)
         matchIDs.append(clsid)
-
-    # Update the keypoint history for those keypoints that were not 
-    # detected/matched in this frame
-    for clsid in set(trackedKPs.keys())-set(matchIDs):
+        if VERBOSE > 2: print clsid, keypointHist[clsid]
+        
+    # Update the keypoint history for previously expanding keypoint that were
+    # not detected/matched in this frame
+    detected = map(attrgetter('class_id'),trainKP)
+    for clsid in keypointHist:
         keypointHist[clsid].age += 1
         keypointHist[clsid].lastFrameIdx -= 1
+
         if keypointHist[clsid].age == MAX_AGE:  # you've had your chance
+            if VERBOSE > 2: print "Deleting keypoint", clsid            
             del trackedKPs[clsid]
             del trackedDesc[clsid]
             del keypointHist[clsid]
-        else:                                   # better luck next time!
+        elif keypointHist[clsid].age > 0 and clsid not in detected :       # better luck next time! (add to the next query)
+            if VERBOSE > 2: print "Keypoint", clsid, "added to next query."
+
             trainKP.append(trackedKPs[clsid])
             if tdesc is None:
                 tdesc = trackedDesc[clsid].reshape(1,-1)
             else:
                 tdesc = np.r_[tdesc,trackedDesc[clsid].reshape(1,-1)]
 
-    t2 = time.time() # end loop timer
+    t2_loop = time.time() # end loop timer
 
-    if expandingKPs:
-        for kp in expandingKPs:
-            clustinfo = "(%d,%.2f)" % (keypointHist[kp.class_id].detects,keypointHist[kp.class_id].scalehist[-1])
-            cv2.putText(dispim,clustinfo,inttuple(kp.pt[0]+kp.size//2,kp.pt[1]-kp.size//2)
-                        ,cv2.FONT_HERSHEY_TRIPLEX, 0.4, (255,255,0))
-
+    # Draw expanding keypoints with tags
     if not opts.nodraw:
         cv2.drawKeypoints(dispim, expandingKPs, dispim, color=(0,0,255)
                           , flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+        for kp in expandingKPs:
+            kpinfo = "(%d,%.2f)" % (keypointHist[kp.class_id].detects,keypointHist[kp.class_id].scalehist[-1])
+            cv2.putText(dispim,kpinfo,inttuple(kp.pt[0]+kp.size//2,kp.pt[1]-kp.size//2)
+                        ,cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,0))
 
-    cluster = ClusterKeypoints(expandingKPs,currFrame)
+    '''
+    Finally, perform some simple clustering of adjacent keypoints to
+    obtain a more accurate estimate of TTC
+    '''
+    cluster = ClusterKeypoints(expandingKPs,keypointHist,currFrame)
     # cluster = MergeClusters(cluster,currFrame)
     if cluster and not opts.nodraw:
+        if VERBOSE:
+            print
+            print "Clusters found:"
+            for c in cluster: print c
+
         c = np.argmin([max(cl.dist) for cl in cluster])
         c = cluster[c]
 
+        if VERBOSE: print "Cluster flagged as object:", c
+
         votes = 0
         ttc = []
-        for kp in c.KPs:
+        for i,kp in enumerate(c.KPs):
+            if VERBOSE > 1:
+                print "timestep_hist_%d =" % i, repr(keypointHist[kp.class_id].timehist)
+                print "scale_hist_%d =" % i, repr(np.array(keypointHist[kp.class_id].scalehist))[6:-1]
+            
             votes += keypointHist[kp.class_id].detects
             kttc = []
             for (t0,t1),scale in zip(keypointHist[kp.class_id].timehist,keypointHist[kp.class_id].scalehist):
@@ -454,30 +506,30 @@ while not rospy.is_shutdown():
 
         ttc = np.mean(ttc) / 1000.
 
-        clustinfo = "(%d,%.2f)" % (votes,ttc)
+        clustinfo = "(%d,%d,%.2f)" % (len(c.KPs),votes,ttc)
         cv2.rectangle(dispim,c.p0,c.p1,color=(0,255,255),thickness=2)
         cv2.putText(dispim,clustinfo,(c.p1[0]-5,c.p1[1])
-                    ,cv2.FONT_HERSHEY_TRIPLEX, 0.4, (0,0,255))        
+                    ,cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,0,255))        
 
     # Draw a broken vertical line at the estimated obstacle horizontal position
-    # newobjsize = sum(kp.size for kp in keypoints)
-    # if newobjsize > 300 and newobjsize > oldobjsize:
-    #     x_obs, y = avgKP(expandingKPs) if expandingKPs else (currFrame.shape[1]//2,currFrame.shape[0]//2)
-    #     cv2.line(dispim, (int(x_obs),scrapY+2), (int(x_obs),currFrame.shape[0]//2-20), (0,255,0), 1)
-    #     cv2.line(dispim, (int(x_obs),currFrame.shape[0]//2+20), (int(x_obs),currFrame.shape[0]-scrapY-2), (0,255,0), 1)
+    # x_obs, y = avgKP(expandingKPs) if expandingKPs else (currFrame.shape[1]//2,currFrame.shape[0]//2)
+    # cv2.line(dispim, (int(x_obs),scrapY+2), (int(x_obs),currFrame.shape[0]//2-20), (0,255,0), 1)
+    # cv2.line(dispim, (int(x_obs),currFrame.shape[0]//2+20), (int(x_obs),currFrame.shape[0]-scrapY-2), (0,255,0), 1)
 
     # Print out drone status to the image
     if kbctrl:
         stat = "BATT=%.2f" % (kbctrl.navdata.batteryPercent)
         cv2.putText(dispim,stat,(currFrame.shape[1]-20,currFrame.shape[0]-10)
                     ,cv2.FONT_HERSHEY_TRIPLEX, 0.65, (0,0,255))        
-    else:
+    elif opts.video:
         stat = "FRAME %4d/%4d" % (frmbuf.cap.get(cv2.CAP_PROP_POS_FRAMES),frmbuf.stop)
         cv2.putText(dispim,stat,(10,currFrame.shape[0]-10)
                     ,cv2.FONT_HERSHEY_TRIPLEX, 0.65, (0,0,255))
         
 
-    # /* Handle keyboard events */ #
+    ''''
+    Handle input keyboard events
+    '''
     # capture key
     cv2.imshow(frmbuf.name, dispim)    
     k = cv2.waitKey(1)%256
@@ -491,7 +543,7 @@ while not rospy.is_shutdown():
            except rospy.ServiceException, e: print e
     elif opts.video:            # video file controls
        if lastkey is not None:
-           while k not in map(ord,('\r','s','q',' ','m')): k = cv2.waitKey(100)%256
+           while k not in map(ord,('\r','s','q',' ','m','b','f')): k = cv2.waitKey(100)%256
        if k == ord('m'):
            opts.showmatches ^= True
            if opts.showmatches: cv2.namedWindow(TEMPLATE_WIN,cv2.WINDOW_OPENGL|cv2.WINDOW_NORMAL)
@@ -507,7 +559,7 @@ while not rospy.is_shutdown():
     if k == ord('d'): opts.nodraw ^= True
     if k == ord('q'): break
 
-    t = (time.time()-t1)
+    t = (time.time()-t1_loop)
     if opts.video and (0.100-t) > 0.001: k = cv2.waitKey(int((0.100-t)*1000))
 
     if opts.record: video_writer.write(dispim)
@@ -517,12 +569,9 @@ while not rospy.is_shutdown():
     queryKP     = trainKP
     qdesc       = tdesc
     t_last      = t_curr
-    # sys.stdout.write("Loop time: %8.3f ms, nkeypoints: %4d\r" % (1000.*(t2 - t1), len(trainKP)))
-    # sys.stdout.flush()
 
 # clean up
 if opts.bag: bagp.kill()
 if opts.record: video_writer.release()
 cv2.destroyAllWindows()
 frmbuf.close()
-print

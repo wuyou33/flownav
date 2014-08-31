@@ -4,19 +4,25 @@ from operator import attrgetter
 
 class KeyPointHistory(object):
     def __init__(self):
-        self.age = 0
-        self.lastFrameIdx = -1
+        self.age = -1
+        self.lastFrameIdx = 0
         self.detects = 0
         self.scalehist = []
         self.timehist = []
 
     def update(self,t0,t1,scale):
-        self.age = 0
-        self.lastFrameIdx = -1
+        self.age = -1
+        self.lastFrameIdx = 0
         self.detects += 1
         self.scalehist.append(scale)
         self.timehist.append((t0,t1))
 
+    def __repr__(self):
+        return repr(dict((attr,getattr(self,attr)) for attr in dir(self)
+                         if not attr.startswith('_') and not callable(getattr(self,attr))))
+    def __str__(self):
+        return str(dict((attr,getattr(self,attr)) for attr in dir(self)
+                         if not attr.startswith('_') and not callable(getattr(self,attr))))        
 
 class Cluster(object):
     def __init__(self,keypoints,img):
@@ -26,8 +32,8 @@ class Cluster(object):
         self.area = np.sum(self.mask)
         self.pt = findCoM(self.mask)
         self.p0, self.p1 = BlobBoundingBox(self.mask)
-        self.KPs = list(keypoints)
-        self.cluster_id = -1
+        self.KPs = [copyKP(kp) for kp in keypoints]
+        # self.cluster_id = -1
         self.dist = [diffKP_L2(self.KPs[i],self.KPs[j]) for i in range(len(self.KPs)-1) for j in range(i+1,len(self.KPs))]
 
     def __repr__(self):
@@ -61,7 +67,7 @@ trunc_coords = lambda shape,xy: [x if x >= 0 and x <= dimsz else (0 if x < 0 els
 
 bboverlap = lambda cl1,cl2: (cl1.p0[0] <= cl2.p1[0] and cl1.p1[0] >= cl2.p0[0]) and (cl1.p0[1] <= cl2.p1[1] and cl1.p1[1] >= cl2.p0[1])
 
-overlap = lambda kp1,kp2: (kp1.size//2+kp2.size//2) > diffKP_L2(kp1,kp2)
+overlap = lambda kp1,kp2,eps=0: (kp1.size//2+kp2.size//2+eps) > diffKP_L2(kp1,kp2)
 
 diffKP_L2 = lambda kp0,kp1: np.sqrt((kp0.pt[0]-kp1.pt[0])**2 + (kp0.pt[1]-kp1.pt[1])**2)
 
