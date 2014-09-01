@@ -18,7 +18,7 @@ import time,sys
 TEMPLATE_WIN = "Template matching"
 MIN_THRESH = 2000
 MAX_THRESH = 2500
-MAX_AGE = 8
+LAST_DAY = 3
 TARGET_N_KP = 50
 
 gmain_win = "flownav"
@@ -70,7 +70,7 @@ def MergeClusters(clusters,img):
 
 
 def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist
-                              , showMatches=False, dispimg=None, method='L1'):
+                              , showMatches=False, dispimg=None, method='L2sq'):
     scale_argmin = []
     expandingMatches = []
 
@@ -84,13 +84,14 @@ def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist
 
     trainImg = frmbuf.grab(0)[0]
     for m in matches:
-        qkp = queryKPs[m.queryIdx]
-        tkp = trainKPs[m.trainIdx]
+        qkp = copyKP(queryKPs[m.queryIdx])
+        tkp = copyKP(trainKPs[m.trainIdx])
 
         # grab the frame where the keypoint was last detected
         fidx = kphist[qkp.class_id].lastFrameIdx if qkp.class_id in kphist else -1
         queryImg = frmbuf.grab(fidx)[0]
 
+        qkp.size = qkp.size*1.3
         # /* Extract the query and train image patch and normalize them. */ #
         x_qkp,y_qkp = qkp.pt
         # r = qkp.size*1.2/9*20 // 2
@@ -269,9 +270,9 @@ video_writer = opts.record
 if opts.video:
     try: opts.video = int(opts.video)
     except ValueError: pass
-    frmbuf = VideoBuffer(opts.video,opts.start,opts.stop,historysize=MAX_AGE+1)
+    frmbuf = VideoBuffer(opts.video,opts.start,opts.stop,historysize=LAST_DAY+1)
 else:
-    frmbuf = ROSCamBuffer(opts.camtopic+"/image_raw",historysize=MAX_AGE+1)
+    frmbuf = ROSCamBuffer(opts.camtopic+"/image_raw",historysize=LAST_DAY+1)
 
 # start the node and control loop
 rospy.init_node("flownav", anonymous=False)
@@ -349,6 +350,8 @@ trackedKPs = OrderedDict()
 trackedDesc = OrderedDict()
 keypointHist = OrderedDict()
 
+for kp in queryKP: kp.class_id = getuniqid()
+
 #------------------------------------------------------------------------------#
 # main loop
 #------------------------------------------------------------------------------#
@@ -364,6 +367,9 @@ while not rospy.is_shutdown():
     First, assign _every_ query keypoint a unique ID
     Note: 1 and -1 are the openCV default class_ids
     '''
+    for kp in queryKP:
+        if kp.class_id in (1,-1): kp.class_id = getuniqid()
+
     # # attempt to adaptively threshold
     # err = len(trainKP)-TARGET_N_KP
     # surf_ui.hessianThreshold += 0.3*(err) + 0.05*(errsum+err)
@@ -374,6 +380,7 @@ while not rospy.is_shutdown():
     '''
     Now, define a one to one mapping to the training keypoints
     '''
+
     trainKP, tdesc = surf_ui.detectAndCompute(currFrame,roi)
 
     # Find the best K matches for each keypoint
@@ -384,6 +391,9 @@ while not rospy.is_shutdown():
     matches = [m[0] for m in matches
                if ((len(m)==2 and m[0].distance < 0.6*m[1].distance) or (len(m)==1))
                and m[0].distance < 0.25]
+
+    for m in matches:
+        trainKP[m.trainIdx].class_id = queryKP[m.queryIdx].class_id
 
     # Filter out matches with outlier spatial distances
     mdist = stats.trim1([diffKP_L2(p0,p1) for p0,p1 in map(getMatchKPs,matches)],0.1)
@@ -416,16 +426,13 @@ while not rospy.is_shutdown():
     matches, kpscales, lastkey = estimateKeypointExpansion(frmbuf, matches
                                                            , queryKP, trainKP, keypointHist
                                                            , opts.showmatches, dispim)
-    expandingKPs = [trainKP[m.trainIdx] for m in matches]
-
     # update matched expanding keypoints with accurate scale
     # carry over keypoint class ids and update the descriptor
     matchIDs = []
     for m,scale in zip(matches,kpscales):
         clsid = queryKP[m.queryIdx].class_id
 
-        if clsid in (-1,1): # keypoint hasn't been assigned an ID
-            clsid = getuniqid()
+        if clsid not in keypointHist:
             keypointHist[clsid] = KeyPointHistory()
             
         trainKP[m.trainIdx].class_id = clsid
@@ -436,25 +443,27 @@ while not rospy.is_shutdown():
             t_A = t_last
 
         # save the keypoint data
+        if t_A == t_curr:
+            print "Ohhhh shitt"
         trackedKPs[clsid] = copyKP(trainKP[m.trainIdx])
         trackedDesc[clsid] = tdesc[m.trainIdx].copy()
         keypointHist[clsid].update(t_A,t_curr,scale)
         matchIDs.append(clsid)
-        if VERBOSE > 2: print clsid, keypointHist[clsid]
+    if len(matchIDs) != len(set(matchIDs)): print "ARGH: ",matchIDs
         
     # Update the keypoint history for previously expanding keypoint that were
     # not detected/matched in this frame
-    detected = map(attrgetter('class_id'),trainKP)
+    detected = [kp.class_id for kp in trainKP]
     for clsid in keypointHist:
         keypointHist[clsid].age += 1
         keypointHist[clsid].lastFrameIdx -= 1
 
-        if keypointHist[clsid].age == MAX_AGE:  # you've had your chance
+        if keypointHist[clsid].age == LAST_DAY:                      # you've had your chance
             if VERBOSE > 2: print "Deleting keypoint", clsid            
             del trackedKPs[clsid]
             del trackedDesc[clsid]
             del keypointHist[clsid]
-        elif keypointHist[clsid].age > 0 and clsid not in detected :       # better luck next time! (add to the next query)
+        elif keypointHist[clsid].age > 0 and clsid not in detected: # better luck next time! (add to the next query)
             if VERBOSE > 2: print "Keypoint", clsid, "added to next query."
 
             trainKP.append(trackedKPs[clsid])
@@ -466,11 +475,13 @@ while not rospy.is_shutdown():
     t2_loop = time.time() # end loop timer
 
     # Draw expanding keypoints with tags
+    expandingKPs = [trackedKPs[clsid] for clsid in matchIDs]
     if not opts.nodraw:
         cv2.drawKeypoints(dispim, expandingKPs, dispim, color=(0,0,255)
                           , flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
         for kp in expandingKPs:
-            kpinfo = "(%d,%.2f)" % (keypointHist[kp.class_id].detects,keypointHist[kp.class_id].scalehist[-1])
+            ttc = np.diff(keypointHist[kp.class_id].timehist[-1]).flatten() / 1000. / (np.array(keypointHist[kp.class_id].scalehist[-1]) - 1)
+            kpinfo = "(%d,%.2f,%.3f)" % (keypointHist[kp.class_id].detects,keypointHist[kp.class_id].scalehist[-1],ttc)
             cv2.putText(dispim,kpinfo,inttuple(kp.pt[0]+kp.size//2,kp.pt[1]-kp.size//2)
                         ,cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,0))
 
@@ -492,19 +503,18 @@ while not rospy.is_shutdown():
         if VERBOSE: print "Cluster flagged as object:", c
 
         votes = 0
-        ttc = []
+        ttc_hist = []
         for i,kp in enumerate(c.KPs):
-            if VERBOSE > 1:
-                print "timestep_hist_%d =" % i, repr(keypointHist[kp.class_id].timehist)
-                print "scale_hist_%d =" % i, repr(np.array(keypointHist[kp.class_id].scalehist))[6:-1]
-            
             votes += keypointHist[kp.class_id].detects
-            kttc = []
-            for (t0,t1),scale in zip(keypointHist[kp.class_id].timehist,keypointHist[kp.class_id].scalehist):
-                kttc.append((t1-t0)/(scale-1))
-            ttc.append(np.mean(kttc))
+            ttc = np.diff(keypointHist[kp.class_id].timehist).flatten() / 1000. / (np.array(keypointHist[kp.class_id].scalehist) - 1)
+            ttc_hist.append(ttc)
 
-        ttc = np.mean(ttc) / 1000.
+        if VERBOSE > 1:
+            disphist = np.zeros((len(ttc_hist),max(len(t) for t in ttc_hist)))
+            for i,ttc_row in enumerate(ttc_hist): disphist[i,0:len(ttc_row)] = ttc_row
+            print "ttc_hist = np.array(", repr(disphist)[6:-1], ")"
+
+        ttc = np.mean([np.mean(ttc[ttc != 0]) for ttc in ttc_hist])
 
         clustinfo = "(%d,%d,%.2f)" % (len(c.KPs),votes,ttc)
         cv2.rectangle(dispim,c.p0,c.p1,color=(0,255,255),thickness=2)
@@ -525,7 +535,6 @@ while not rospy.is_shutdown():
         stat = "FRAME %4d/%4d" % (frmbuf.cap.get(cv2.CAP_PROP_POS_FRAMES),frmbuf.stop)
         cv2.putText(dispim,stat,(10,currFrame.shape[0]-10)
                     ,cv2.FONT_HERSHEY_TRIPLEX, 0.65, (0,0,255))
-        
 
     ''''
     Handle input keyboard events
