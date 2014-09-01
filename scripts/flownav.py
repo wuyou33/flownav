@@ -18,7 +18,7 @@ import time,sys
 TEMPLATE_WIN = "Template matching"
 MIN_THRESH = 2000
 MAX_THRESH = 2500
-LAST_DAY = 3
+LAST_DAY = 5
 TARGET_N_KP = 50
 
 gmain_win = "flownav"
@@ -70,11 +70,11 @@ def MergeClusters(clusters,img):
 
 
 def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist
-                              , showMatches=False, dispimg=None, method='L2sq'):
+                              , showMatches=False, dispimg=None, method='L1'):
     scale_argmin = []
     expandingMatches = []
 
-    scalerange = 1.0+np.arange(0.5+0.0125,step=0.0125)
+    scalerange = 1.0+np.arange(0.6+0.0125,step=0.0125)
     res = np.zeros(len(scalerange))
     k = None
     skipMatches = False
@@ -85,16 +85,15 @@ def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist
     trainImg = frmbuf.grab(0)[0]
     for m in matches:
         qkp = copyKP(queryKPs[m.queryIdx])
-        tkp = copyKP(trainKPs[m.trainIdx])
+        tkp = trainKPs[m.trainIdx]
 
         # grab the frame where the keypoint was last detected
         fidx = kphist[qkp.class_id].lastFrameIdx if qkp.class_id in kphist else -1
         queryImg = frmbuf.grab(fidx)[0]
 
-        qkp.size = qkp.size*1.3
         # /* Extract the query and train image patch and normalize them. */ #
+        qkp.size = qkp.size*1.25
         x_qkp,y_qkp = qkp.pt
-        # r = qkp.size*1.2/9*20 // 2
         r = qkp.size // 2
         x0,y0 = trunc_coords(queryImg.shape,(x_qkp-r, y_qkp-r))
         x1,y1 = trunc_coords(queryImg.shape,(x_qkp+r, y_qkp+r))
@@ -103,7 +102,6 @@ def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist
         querypatch = (querypatch-np.mean(querypatch))/np.std(querypatch)
 
         x_tkp,y_tkp = tkp.pt
-        # r = qkp.size*scalerange[-1]*1.2/9*20 // 2
         r = qkp.size*scalerange[-1] // 2
         x0,y0 = trunc_coords(trainImg.shape,(x_tkp-r, y_tkp-r))
         x1,y1 = trunc_coords(trainImg.shape,(x_tkp+r, y_tkp+r))
@@ -111,11 +109,10 @@ def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist
         if not trainpatch.size: continue
         trainpatch = (trainpatch-np.mean(trainpatch))/np.std(trainpatch)
 
-        # /* Scale up the query to perform template matching */ #
+        # Scale up the query to perform template matching
         x_tkp,y_tkp = x_tkp-x0,y_tkp-y0
         res[:] = np.nan
         for i,scale in enumerate(scalerange):
-            # r = qkp.size*scale*1.2/9*20 // 2
             r = qkp.size*scale // 2
             x0,y0 = trunc_coords(trainpatch.shape,(x_tkp-r, y_tkp-r))
             x1,y1 = trunc_coords(trainpatch.shape,(x_tkp+r, y_tkp+r))
@@ -147,7 +144,6 @@ def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist
             if not showMatches: continue
 
             # recalculate the best matching scaled template
-            # r = qkp.size*scalemin*1.2/9*20 // 2
             r = qkp.size*scalemin // 2
             x0,y0 = trunc_coords(trainpatch.shape,(x_tkp-r, y_tkp-r))
             x1,y1 = trunc_coords(trainpatch.shape,(x_tkp+r, y_tkp+r))
@@ -330,7 +326,7 @@ surf_ui = cv2.SURF(hessianThreshold=opts.threshold,extended=True)
 # mask out a central portion of the image
 lastFrame, t_last = frmbuf.grab()
 roi = np.zeros(lastFrame.shape,np.uint8)
-scrapY, scrapX = lastFrame.shape[0]//8, lastFrame.shape[1]//8
+scrapY, scrapX = lastFrame.shape[0]//4, lastFrame.shape[1]//4
 roi[scrapY:-scrapY, scrapX:-scrapX] = True
 
 if opts.record:
@@ -413,10 +409,10 @@ while not rospy.is_shutdown():
                       ,(currFrame.shape[1]-scrapX,currFrame.shape[0]-scrapY)
                       ,(192,192,192),thickness=2)
 
-    if np.mean(mdist) > 10:
-        print "Optical flow velocity exceeded"
-        print np.mean(mdist)
-        matches = []
+    # if np.mean(mdist) > 10:
+    #     print "Optical flow velocity exceeded"
+    #     print np.mean(mdist)
+    #     matches = []
 
     '''
     Find an estimate of the scale change for keypoints that are expanding
@@ -434,8 +430,6 @@ while not rospy.is_shutdown():
 
         if clsid not in keypointHist:
             keypointHist[clsid] = KeyPointHistory()
-            
-        trainKP[m.trainIdx].class_id = clsid
 
         if len(keypointHist[clsid].timehist) != 0:
             t_A = keypointHist[clsid].timehist[-1][-1]
@@ -443,13 +437,11 @@ while not rospy.is_shutdown():
             t_A = t_last
 
         # save the keypoint data
-        if t_A == t_curr:
-            print "Ohhhh shitt"
+        trainKP[m.trainIdx].class_id = clsid
         trackedKPs[clsid] = copyKP(trainKP[m.trainIdx])
         trackedDesc[clsid] = tdesc[m.trainIdx].copy()
         keypointHist[clsid].update(t_A,t_curr,scale)
         matchIDs.append(clsid)
-    if len(matchIDs) != len(set(matchIDs)): print "ARGH: ",matchIDs
         
     # Update the keypoint history for previously expanding keypoint that were
     # not detected/matched in this frame
@@ -471,7 +463,6 @@ while not rospy.is_shutdown():
                 tdesc = trackedDesc[clsid].reshape(1,-1)
             else:
                 tdesc = np.r_[tdesc,trackedDesc[clsid].reshape(1,-1)]
-
     t2_loop = time.time() # end loop timer
 
     # Draw expanding keypoints with tags
@@ -479,11 +470,20 @@ while not rospy.is_shutdown():
     if not opts.nodraw:
         cv2.drawKeypoints(dispim, expandingKPs, dispim, color=(0,0,255)
                           , flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-        for kp in expandingKPs:
-            ttc = np.diff(keypointHist[kp.class_id].timehist[-1]).flatten() / 1000. / (np.array(keypointHist[kp.class_id].scalehist[-1]) - 1)
-            kpinfo = "(%d,%.2f,%.3f)" % (keypointHist[kp.class_id].detects,keypointHist[kp.class_id].scalehist[-1],ttc)
-            cv2.putText(dispim,kpinfo,inttuple(kp.pt[0]+kp.size//2,kp.pt[1]-kp.size//2)
-                        ,cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,0))
+        for m in matches:
+            qkp = queryKP[m.queryIdx]
+            tkp = trainKP[m.trainIdx]
+            # c = keypointHist[tkp.class_id].scalehist[-1]
+            # a = abs(qkp.pt[1] - (currFrame.shape[1]//2))
+            # b = abs(tkp.pt[1] - (currFrame.shape[1]//2))
+            scale = np.array(keypointHist[tkp.class_id].scalehist[-1])
+            # tstep = np.diff(keypointHist[tkp.class_id].timehist[-1]).flatten() / 1000.
+            tstep = 1
+            ttc = tstep / (scale - 1)
+
+            kpinfo = "(%d,%.2f,%.3f)" % (keypointHist[tkp.class_id].detects,scale,ttc)
+            cv2.putText(dispim,kpinfo,inttuple(tkp.pt[0]+tkp.size//2,tkp.pt[1]-tkp.size//2)
+                        ,cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255,255,0))
 
     '''
     Finally, perform some simple clustering of adjacent keypoints to
@@ -506,7 +506,8 @@ while not rospy.is_shutdown():
         ttc_hist = []
         for i,kp in enumerate(c.KPs):
             votes += keypointHist[kp.class_id].detects
-            ttc = np.diff(keypointHist[kp.class_id].timehist).flatten() / 1000. / (np.array(keypointHist[kp.class_id].scalehist) - 1)
+            # ttc = np.diff(keypointHist[kp.class_id].timehist).flatten() / 1000. / (np.array(keypointHist[kp.class_id].scalehist) - 1)
+            ttc = 1 / (np.array(keypointHist[kp.class_id].scalehist) - 1)            
             ttc_hist.append(ttc)
 
         if VERBOSE > 1:
@@ -514,12 +515,17 @@ while not rospy.is_shutdown():
             for i,ttc_row in enumerate(ttc_hist): disphist[i,0:len(ttc_row)] = ttc_row
             print "ttc_hist = np.array(", repr(disphist)[6:-1], ")"
 
-        ttc = np.mean([np.mean(ttc[ttc != 0]) for ttc in ttc_hist])
+        ttc = np.mean([ttc[ttc != 0][-1] for ttc in ttc_hist])
 
         clustinfo = "(%d,%d,%.2f)" % (len(c.KPs),votes,ttc)
+        if VERBOSE > 1:
+            print "Overlapping keypoints:", len(c.KPs)
+            print "Votes:", votes
+            print "ttc:", ttc
+            print 
         cv2.rectangle(dispim,c.p0,c.p1,color=(0,255,255),thickness=2)
         cv2.putText(dispim,clustinfo,(c.p1[0]-5,c.p1[1])
-                    ,cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,0,255))        
+                    ,cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0,0,255))        
 
     # Draw a broken vertical line at the estimated obstacle horizontal position
     # x_obs, y = avgKP(expandingKPs) if expandingKPs else (currFrame.shape[1]//2,currFrame.shape[0]//2)
@@ -531,7 +537,7 @@ while not rospy.is_shutdown():
         stat = "BATT=%.2f" % (kbctrl.navdata.batteryPercent)
         cv2.putText(dispim,stat,(currFrame.shape[1]-20,currFrame.shape[0]-10)
                     ,cv2.FONT_HERSHEY_TRIPLEX, 0.65, (0,0,255))        
-    elif opts.video:
+    elif opts.video and frmbuf.stop is not None:
         stat = "FRAME %4d/%4d" % (frmbuf.cap.get(cv2.CAP_PROP_POS_FRAMES),frmbuf.stop)
         cv2.putText(dispim,stat,(10,currFrame.shape[0]-10)
                     ,cv2.FONT_HERSHEY_TRIPLEX, 0.65, (0,0,255))
@@ -552,7 +558,7 @@ while not rospy.is_shutdown():
            except rospy.ServiceException, e: print e
     elif opts.video:            # video file controls
        if lastkey is not None:
-           while k not in map(ord,('\r','s','q',' ','m','b','f')): k = cv2.waitKey(100)%256
+           while k not in map(ord,('\r','s','q',' ','m','b','f')): k = cv2.waitKey(250)%256
        if k == ord('m'):
            opts.showmatches ^= True
            if opts.showmatches: cv2.namedWindow(TEMPLATE_WIN,cv2.WINDOW_OPENGL|cv2.WINDOW_NORMAL)
@@ -560,14 +566,15 @@ while not rospy.is_shutdown():
        while(k == ord('b')):
            frmbuf.seek(-2)
            cv2.imshow(frmbuf.name,frmbuf.grab()[0])
-           k = cv2.waitKey(100)%256               
+           k = cv2.waitKey(250)%256
        while(k == ord('f')):
            frmbuf.seek(1)
            cv2.imshow(frmbuf.name,frmbuf.grab()[0])
-           k = cv2.waitKey(100)%256
+           k = cv2.waitKey(250)%256
     if k == ord('d'): opts.nodraw ^= True
     if k == ord('q'): break
 
+    # limit the display frame rate to 10fps
     t = (time.time()-t1_loop)
     if opts.video and (0.100-t) > 0.001: k = cv2.waitKey(int((0.100-t)*1000))
 
