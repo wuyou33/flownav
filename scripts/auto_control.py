@@ -28,7 +28,9 @@ class AutoController(DroneController):
 
     def Play(self):
         self._current_state.update(self._last_state)
-        if self._current_state['pitch'] == 0: self.SendCommand(pitch=STEP)
+        if self._current_state['pitch'] == 0:
+            self.SendTakeoff()
+            self.SendCommand(pitch=STEP)
 
     # def React(self,keypoints,img):
     #     if not keypoints: return

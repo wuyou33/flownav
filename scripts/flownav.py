@@ -25,14 +25,6 @@ gmain_win = "flownav"
 
 VERBOSE = 1
 
-def React(controller,img,timediff):
-    v = controller.navdata.vx
-
-    ttc = timediff/relsize
-    if ttc <= threshttc:
-        if (x_obs-img.shape[1]//2) < 0: self.RollRight()
-        if x_obs >= img.shape[1]//2: self.RollLeft()
-
 
 def ClusterKeypoints(keypoints,kphist,img):
     if len(keypoints) < 2: return []
@@ -48,7 +40,7 @@ def ClusterKeypoints(keypoints,kphist,img):
                 clust.append(unclusteredKPs.pop(i))
             else:
                 i += 1
-        if len(clust) > 1 and sum(len(kphist[kp.class_id].scalehist) for kp in clust) > 1:
+        if len(clust) > 1 and sum(kphist[kp.class_id].detects for kp in clust) > 2:
             cluster.append(Cluster(clust,img))
 
     return cluster
@@ -70,7 +62,7 @@ def MergeClusters(clusters,img):
 
 
 def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist
-                              , showMatches=False, dispimg=None, method='L1'):
+                              , showMatches=False, dispimg=None, method='L2sq'):
     scale_argmin = []
     expandingMatches = []
 
@@ -92,7 +84,7 @@ def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist
         queryImg = frmbuf.grab(fidx)[0]
 
         # /* Extract the query and train image patch and normalize them. */ #
-        qkp.size = qkp.size*1.25
+        qkp.size = qkp.size*1.1
         x_qkp,y_qkp = qkp.pt
         r = qkp.size // 2
         x0,y0 = trunc_coords(queryImg.shape,(x_qkp-r, y_qkp-r))
@@ -208,7 +200,6 @@ def generateuniqid():
 #------------------------------------------------------------------------------#
 import optparse
 import os
-from subprocess import Popen
  
 parser = optparse.OptionParser(usage="flownav.py [options]")
 parser.add_option("-b", "--bag", dest="bag", default=None
@@ -217,7 +208,7 @@ parser.add_option("-b", "--bag", dest="bag", default=None
 # parser.add_option("-l", "--log", dest="log", default=None
 #                   , help="Specify where to output intermediate analysis results. (don't)")
 
-parser.add_option("--threshold", dest="threshold", type=float, default=1500.
+parser.add_option("--threshold", dest="threshold", type=float, default=2000.
                   , help="Set the Hessian threshold for keypoint detection.")
 
 parser.add_option("-m", "--draw-scale-match", dest="showmatches"
@@ -232,13 +223,13 @@ parser.add_option("-q", "--quiet", dest="quiet", default=False
 
 parser.add_option("--no-draw", dest="nodraw"
                   , action="store_true", default=False
-                  , help="Draw keypoints and their matches.")
+                  , help="Don't draw on display image.")
 
 parser.add_option("--video-topic", dest="camtopic", default="/ardrone"
                   , help="Specify the topic for camera feed (default='/ardrone').")
 
 parser.add_option("--video-file", dest="video", default=None
-                  , help="Load a video file to test or specify camera ID (typically 0).")
+                  , help="Load a video file to test.")
 
 parser.add_option("-r","--record-video", dest="record", default=None
                   , help="Record session to video file.")
@@ -249,13 +240,14 @@ parser.add_option("--start", dest="start"
 
 parser.add_option("--stop", dest="stop"
                   , type="int", default=None
-                  , help="Stop frame number for analysis.")
+                  , help="Stop frame number for video file analysis.")
 
 (opts, args) = parser.parse_args()
 
 VERBOSE = 0 if opts.quiet else opts.verbose
 
 if opts.bag:
+    from subprocess import Popen
     DEVNULL = open(os.devnull, 'wb')
     bagp = Popen(["rosbag","play",opts.bag],stdout=DEVNULL,stderr=DEVNULL)
 
@@ -268,7 +260,7 @@ if opts.video:
     except ValueError: pass
     frmbuf = VideoBuffer(opts.video,opts.start,opts.stop,historysize=LAST_DAY+1)
 else:
-    frmbuf = ROSCamBuffer(opts.camtopic+"/image_raw",historysize=LAST_DAY+1)
+    frmbuf = ROSCamBuffer(opts.camtopic+"/image_raw",historysize=LAST_DAY+1,buffersize=100)
 
 # start the node and control loop
 rospy.init_node("flownav", anonymous=False)
@@ -279,9 +271,6 @@ if opts.camtopic == "/ardrone" and not opts.video:
 if kbctrl:
     FlatTrim = rospy.ServiceProxy("/ardrone/flattrim",Empty())
     Calibrate = rospy.ServiceProxy("/ardrone/imu_recalib",Empty())
-else:
-    FlatTrim = lambda : None
-    Calibrate = lambda : None    
 
 gmain_win = frmbuf.name
 cv2.namedWindow(gmain_win, flags=cv2.WINDOW_OPENGL|cv2.WINDOW_NORMAL)
@@ -326,7 +315,7 @@ surf_ui = cv2.SURF(hessianThreshold=opts.threshold,extended=True)
 # mask out a central portion of the image
 lastFrame, t_last = frmbuf.grab()
 roi = np.zeros(lastFrame.shape,np.uint8)
-scrapY, scrapX = lastFrame.shape[0]//4, lastFrame.shape[1]//4
+scrapY, scrapX = lastFrame.shape[0]//8, lastFrame.shape[1]//8
 roi[scrapY:-scrapY, scrapX:-scrapX] = True
 
 if opts.record:
@@ -385,8 +374,8 @@ while not rospy.is_shutdown():
 
     # Filter out poor matches by ratio test , maximum (descriptor) distance
     matches = [m[0] for m in matches
-               if ((len(m)==2 and m[0].distance < 0.6*m[1].distance) or (len(m)==1))
-               and m[0].distance < 0.25]
+               if ((len(m)==2 and m[0].distance < 0.7*m[1].distance) or (len(m)==1))
+               and m[0].distance < 0.2]
 
     for m in matches:
         trainKP[m.trainIdx].class_id = queryKP[m.queryIdx].class_id
@@ -489,19 +478,21 @@ while not rospy.is_shutdown():
     Finally, perform some simple clustering of adjacent keypoints to
     obtain a more accurate estimate of TTC
     '''
-    cluster = ClusterKeypoints(expandingKPs,keypointHist,currFrame)
+    clusterpoints = [trackedKPs[clsid] for clsid in keypointHist if keypointHist[clsid].age <= 1]
+    cluster = ClusterKeypoints(clusterpoints,keypointHist,currFrame)
     # cluster = MergeClusters(cluster,currFrame)
-    if cluster and not opts.nodraw:
+    if cluster:
         if VERBOSE:
             print
             print "Clusters found:"
             for c in cluster: print c
-
         c = np.argmin([max(cl.dist) for cl in cluster])
         c = cluster[c]
-
         if VERBOSE: print "Cluster flagged as object:", c
+    else:
+        c = None
 
+    if not opts.nodraw and cluster:
         votes = 0
         ttc_hist = []
         for i,kp in enumerate(c.KPs):
@@ -522,33 +513,36 @@ while not rospy.is_shutdown():
             print "Overlapping keypoints:", len(c.KPs)
             print "Votes:", votes
             print "ttc:", ttc
-            print 
         cv2.rectangle(dispim,c.p0,c.p1,color=(0,255,255),thickness=2)
         cv2.putText(dispim,clustinfo,(c.p1[0]-5,c.p1[1])
-                    ,cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0,0,255))        
+                    ,cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0,0,255))
+        # Draw a broken vertical line at the estimated obstacle horizontal position
+        x_obs, y = c.pt
+        if (x_obs-(currFrame.shape[1]//2)) < 0: offset = 50
+        if x_obs >= (currFrame.shape[1]//2): offset = -50
+        dispim = cv2.arrowedLine(dispim, (currFrame.shape[1]//2,currFrame.shape[0] - 50), (currFrame.shape[1]//2+offset,currFrame.shape[0] - 50),(0,255,0),3)
 
-    # Draw a broken vertical line at the estimated obstacle horizontal position
-    # x_obs, y = avgKP(expandingKPs) if expandingKPs else (currFrame.shape[1]//2,currFrame.shape[0]//2)
-    # cv2.line(dispim, (int(x_obs),scrapY+2), (int(x_obs),currFrame.shape[0]//2-20), (0,255,0), 1)
-    # cv2.line(dispim, (int(x_obs),currFrame.shape[0]//2+20), (int(x_obs),currFrame.shape[0]-scrapY-2), (0,255,0), 1)
+    if kbctrl and c:
+        x_obs = c.pt[0]
+        if (x_obs-currFrame.shape[1]//2) < 0: self.RollRight()
+        if x_obs >= currFrame.shape[1]//2: self.RollLeft()
 
     # Print out drone status to the image
     if kbctrl:
         stat = "BATT=%.2f" % (kbctrl.navdata.batteryPercent)
-        cv2.putText(dispim,stat,(currFrame.shape[1]-20,currFrame.shape[0]-10)
-                    ,cv2.FONT_HERSHEY_TRIPLEX, 0.65, (0,0,255))        
+        cv2.putText(dispim,stat,(10,currFrame.shape[0]-10)
+                    ,cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255))
     elif opts.video and frmbuf.stop is not None:
         stat = "FRAME %4d/%4d" % (frmbuf.cap.get(cv2.CAP_PROP_POS_FRAMES),frmbuf.stop)
         cv2.putText(dispim,stat,(10,currFrame.shape[0]-10)
-                    ,cv2.FONT_HERSHEY_TRIPLEX, 0.65, (0,0,255))
+                    ,cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255))
 
     ''''
     Handle input keyboard events
     '''
-    # capture key
-    cv2.imshow(frmbuf.name, dispim)    
-    k = cv2.waitKey(1)%256
+    cv2.imshow(frmbuf.name, dispim if dispim is not None else currFrame)
     if kbctrl:                  # drone keyboard events
+       k = cv2.waitKey(1)%256        
        kbctrl.keyPressEvent(k)
        if k == ord('f'):
            try: FlatTrim()
@@ -557,8 +551,13 @@ while not rospy.is_shutdown():
            try: Calibrate()
            except rospy.ServiceException, e: print e
     elif opts.video:            # video file controls
+
        if lastkey is not None:
            while k not in map(ord,('\r','s','q',' ','m','b','f')): k = cv2.waitKey(250)%256
+       else:
+           # limit the loop rate to 10 Hz the hacky way
+           t = (time.time()-t1_loop)
+           k = cv2.waitKey(int(max((0.100-t)*1000,1)))%256
        if k == ord('m'):
            opts.showmatches ^= True
            if opts.showmatches: cv2.namedWindow(TEMPLATE_WIN,cv2.WINDOW_OPENGL|cv2.WINDOW_NORMAL)
@@ -574,10 +573,6 @@ while not rospy.is_shutdown():
     if k == ord('d'): opts.nodraw ^= True
     if k == ord('q'): break
 
-    # limit the display frame rate to 10fps
-    t = (time.time()-t1_loop)
-    if opts.video and (0.100-t) > 0.001: k = cv2.waitKey(int((0.100-t)*1000))
-
     if opts.record: video_writer.write(dispim)
 
     # push back our current data
@@ -589,5 +584,7 @@ while not rospy.is_shutdown():
 # clean up
 if opts.bag: bagp.kill()
 if opts.record: video_writer.release()
+if kbctrl: kbctrl.close()
+
 cv2.destroyAllWindows()
 frmbuf.close()

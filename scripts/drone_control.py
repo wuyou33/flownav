@@ -87,4 +87,5 @@ class DroneController(object):
         for cmd in self._current_state:
             self._current_state[cmd] = self.max_speed if self._current_state[cmd] > self.max_speed else (-self.max_speed if self._current_state[cmd] < -self.max_speed else self._current_state[cmd])
 
-
+    def close(self):
+        self.SendLand()

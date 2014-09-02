@@ -80,10 +80,11 @@ class ROSCamBuffer(object):
         self.name=topic
         self.bridge = CvBridge()
         self.image_sub = rospy.Subscriber(topic, Image, self.shiftBuffer)
-        self._buffer = [(np.array([]),-1)]*buffersize
-        self._size = buffersize
-        self._currIdx = 0
+        self._size = historysize+buffersize
         self._histsize = historysize
+        self._buffer = [(np.array([]),-1)]*self._size
+        self._currIdx = 0
+        self._bufferIdx = 0
 
     def shiftBuffer(self,data):
         try:
@@ -94,18 +95,19 @@ class ROSCamBuffer(object):
         except KeyboardInterrupt:
             raise
 
-        if (self._currIdx-self._histsize) == -self._size:
-            print "ROSCamBuffer: WARNING: Buffer overflow"
+        if (self._currIdx-self._histsize) <= -self._size:
+            print "ROSCamBuffer WARNING: Buffer overflow"
         else:
             self._currIdx -= 1
 
         self._buffer[:-1] = self._buffer[1:]
-        self._buffer[-1] = (img,data.msg.header.stamp)
+        self._buffer[-1] = (img,data.header.stamp)
 
     def grab(self,frameIdx=1):
         if frameIdx > 0:
             try: # spin until the buffer has something in it
-                while self._currIdx == 0: None
+                while self._currIdx > -self._histsize or self._buffer[self._currIdx][0].size == 0:
+                    None
             except KeyboardInterrupt:
                 raise
             img, time = self._buffer[self._currIdx]
