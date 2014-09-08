@@ -18,47 +18,56 @@ velocities being negligible.
 
 ## Derivation
 
-The rate of change of scale of an object measured between two image frames is
-inversely related the distance to the object. Assuming that the drone is headed
-straight towards a point on an obstacle, we can estimate the Time to Contact
-(TTC) with an object using only the rate of change in scale of an obstacle and
-the time interval between two frames. Figure 1 below shows the derivation of
-this relationship assuming the the pinhole camera model.
+It is straightforward to show that the rate of change of scale of an object
+measured between two image frames is inversely related the distance to the
+object. Assuming that the drone is headed straight towards a point on an
+obstacle, we can estimate the Time to Contact (TTC) with an object using only
+the rate of change in scale of an obstacle and the time interval between two
+frames. Figure 1 below shows the derivation of this relationship assuming the
+the pinhole camera model.
 
 ![Estimating TTC](ttc_diagram.png "Estimating TTC")
 
 ## Related works
 
-### Camus, '95
-[Real Time Optical Flow](ftp://ftp.cs.brown.edu/pub/techreports/94/cs94-36.pdf) 
+### Camus, '94
+Real Time Optical Flow
+ftp://ftp.cs.brown.edu/pub/techreports/94/cs94-36.pdf
 
-Camus developed one of the first successful applications where optical vision was used for obstacle avoidance in real time. He developed a block matching optical flow algorithm that estimated flow using reduced computational resources by finding the best match across _several_ time adjacent frames within a small spatial neighborhood. Camus solved the problem of obstacle detection by estimating the _time_to_contact_ (TTC) derived using an estimate of the location of the Focus of Expansion (FoE): the point around which optical flow radially diverges. Assuming that the camera is headed directly towards the FoE, it can be shown that the time to collision (TTC) with an object is inversely related to the divergence of the optical flow around the FoE. By assuming translational motion and only one obstacle in the scene, the FoE location was estimated by simply averaging optical flow over the entire image without respect to flow magnitude and iteratively reducing the window size to refine the measurement until it was reduced to a 4x4 window. Camus performed experiments with a wheeled mobile robot which showed good convergence to true TTC. However, the environment was limited to an indoor scene where the robot maintained a constant velocity of 5cm/s and where unwanted movements of the robot (such as vibrations and momentary rotations) were truly negligible.
+Camus developed one of the first successful applications where optical vision was used for obstacle avoidance in real time. He developed a block matching optical flow algorithm that estimated flow using reduced computational resources by finding the best match across _several_ time adjacent frames within a small spatial neighborhood. Camus solved the problem of obstacle detection by estimating the _time_ _to_ _contact_ (TTC) derived using an estimate of the location of the Focus of Expansion (FoE): the point around which optical flow radially diverges. Assuming that the camera is headed directly towards the FoE, it can be shown that the time to collision with an object is inversely related to the divergence of the optical flow around the FoE. By assuming translational motion and only one obstacle in the scene, the FoE location was estimated by simply averaging optical flow over the entire image without respect to flow magnitude and iteratively reducing the window size to refine the measurement until it was reduced to a 4x4 window. Camus performed experiments with a wheeled mobile robot which showed good convergence to true TTC. However, the environment was limited to an indoor scene where the robot maintained a constant velocity of 5cm/s and where unwanted movements of the robot (such as vibrations and momentary rotations) were truly negligible.
 
 ### Zufferey, '05
-[Toward 30-gram autonomous indoor aircraft: Vision based obstacle avoidance and altitude control](http://ieeexplore.ieee.org/xpl/login.jsp?tp=&arnumber=1570504&url=http%3A%2F%2Fieeexplore.ieee.org%2Fxpls%2Fabs_all.jsp%3Farnumber%3D1570504)
+Toward 30-gram autonomous indoor aircraft: Vision based obstacle avoidance and altitude control
 
-Zufferey developed a biologically inspired light weight airplane flyer with a few low res 1-D cameras and onboard vision processing that could explore a highly textured indoor environment without colliding into walls. The mode of information for obstacle avoidance here was decidedly simpler. Only the divergence of optical flow was estimated in (1-D) regions of the image. The flyer used a balancing strategy to maintain its pitch and yaw by differencing the optical flow on the left and right of a horizontally oriented line sensor and differencing the top and bottom half of flow with a vertically oriented line sensor. These difference were also subject to a threshold which, by estimating flow divergence, could trigger a 90 degree saccade to avoid frontal obstacles. Noting that inevitable rotational optical flow caused by the flyer's steering introduced spurious measurements that are unrelated to the distance to obstacle, Zufferey also used an IMU to monitor and remove effects of rotations.
+Zufferey developed a biologically inspired light weight airplane flyer with a few low res 1-D cameras and onboard microcontroller that could explore a highly textured indoor environment without colliding into walls. The mode of information for obstacle avoidance here was decidedly simpler. Only the divergence of optical flow was estimated in (1-D) regions of the image. The flyer used a balancing strategy to maintain its pitch and yaw by differencing the optical flow on the left and right of a horizontally oriented line sensor and differencing the top and bottom half of flow with a vertically oriented line sensor. The horizontal difference was also subject to a threshold which, by estimating flow divergence, could trigger a 90 degree saccade to avoid frontal obstacles. Noting that inevitable rotational optical flow caused by the flyer's steering introduced spurious measurements that are unrelated to the distance to obstacle, Zufferey also used an IMU to monitor and remove effects of rotations.
 
 ### Sazbon, '04
-[Finding the focus of expansion and estimating range using optical flow images and a matched filter](http://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd=1&ved=0CB8QFjAA&url=http%3A%2F%2Fwww.researchgate.net%2Fpublication%2F220465015_Finding_the_focus_of_expansion_and_estimating_range_using_optical_flow_images_and_a_matched_filter%2Flinks%2F0912f5075b9704d923000000&ei=F3XqU7qMA6r1iwLG-YHIBA&usg=AFQjCNF870JdXZkd6Ne0rBoI4OS2Sw5ACg&sig2=wuc9MCENfjcY5n8TIi74Tw&bvm=bv.72676100,d.cGE)
+Finding the focus of expansion and estimating range using optical flow images and a matched filter
 
 Sazbon proposes a unique yet simple approach to focus of expansion detection, a subproblem of the time to contact method of obstacle avoidance. A filter is proposed that is simply a template of the focus of expansion - a square window with perfectly radially diverging optical flow with zero flow at the center. In matching, only the angle of optical flow is considered so that matching is invariant to flow magnitude. However, the experiments only include focus of expansion location on a few ideal images and algorithm wasn't integrated into any actual application e.g. obstacle avoidance for a mobile robot.
 
-### Dependencies
+## Implementation details
 
+Feature tracking
+clustering of features
+removal of poor matches
+improving estimation using multiple scale estimates
+factors for selecting/rejecting objects
+
+## Dependencies
 
 - `ardrone_autonomy`
 
 - `opencv`
 
 
-### Optional
+## Optional
 
-* `uvc_camera`
+- `uvc_camera`
 
 - `ros-joy`
 
-# Notes on Robot Operating System (ROS) 
+## Notes on Robot Operating System (ROS) 
 
 **Installation**
 

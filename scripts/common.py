@@ -2,6 +2,7 @@ import numpy as np
 import cv2
 from operator import attrgetter
 
+
 class KeyPointHistory(object):
     def __init__(self):
         self.age = -1
@@ -9,13 +10,27 @@ class KeyPointHistory(object):
         self.detects = 0
         self.scalehist = []
         self.timehist = []
+        self.keypoint = None
+        self.descriptor = None
+        self.consecutive = 0
 
-    def update(self,t0,t1,scale):
+    def update(self,kp,desc,t0,t1,scale):
+        if self.timehist and t0 == self.timehist[-1][-1]:
+            self.consecutive += 1
+        else:
+            self.consecutive = 1
+
         self.age = -1
         self.lastFrameIdx = 0
         self.detects += 1
         self.scalehist.append(scale)
         self.timehist.append((t0,t1))
+        self.descriptor = desc.copy()
+        self.keypoint = copyKP(kp)
+
+    def downdate(self):
+        self.age += 1
+        self.lastFrameIdx -= 1
 
     def __repr__(self):
         return repr(dict((attr,getattr(self,attr)) for attr in dir(self)
@@ -33,7 +48,6 @@ class Cluster(object):
         self.pt = findCoM(self.mask)
         self.p0, self.p1 = BlobBoundingBox(self.mask)
         self.KPs = [copyKP(kp) for kp in keypoints]
-        # self.cluster_id = -1
         self.dist = [diffKP_L2(self.KPs[i],self.KPs[j]) for i in range(len(self.KPs)-1) for j in range(i+1,len(self.KPs))]
 
     def __repr__(self):

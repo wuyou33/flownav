@@ -3,7 +3,7 @@
     <node name="ardrone_driver" pkg="ardrone_autonomy" type="ardrone_driver" output="screen" clear_params="true">
         <param name="navdata_demo" value="0" />
 	<param name="realtime_navdata" value="false" />
-        <param name="looprate" value="50" />
+        <param name="looprate" value="20" />
 
         <param name="outdoor" value="1" />
         <param name="flight_without_shell" value="0" />

@@ -63,10 +63,9 @@ class DroneController(object):
 
         # update the state dictionary (only variables that were set)
         cmdargs = dict(pitch=pitch,roll=roll,z_velocity=z_velocity,yaw_velocity=yaw_velocity)
-        if cmdargs:
-            self._current_state.update([(k,(v+self._current_state[k]) if relative else v)
-                                        for k,v in cmdargs.items() if v is not None])
-            self.__saturate()
+        if any(v is not None for v in cmdargs.values()):
+            self._current_state.update([ (k , self.__saturate( (v+self._current_state[k]) if relative else v ))
+                                         for k,v in cmdargs.items() if v is not None])
         
         cmd = Twist()
         cmd.linear.x  = self._current_state['pitch']
@@ -83,9 +82,8 @@ class DroneController(object):
             if len(self._queue) == 0: self.SendCommand()
             self.pubCommand.publish(self._queue.pop())
 
-    def __saturate(self):
-        for cmd in self._current_state:
-            self._current_state[cmd] = self.max_speed if self._current_state[cmd] > self.max_speed else (-self.max_speed if self._current_state[cmd] < -self.max_speed else self._current_state[cmd])
+    def __saturate(self,val):
+        return self.max_speed if val > self.max_speed else (-self.max_speed if val < -self.max_speed else val)
 
     def close(self):
         self.SendLand()

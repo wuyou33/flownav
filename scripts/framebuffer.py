@@ -1,3 +1,4 @@
+import sys
 from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image
 from std_msgs.msg import Empty
@@ -6,6 +7,7 @@ import rospy
 import cv2
 import numpy as np
 
+VERBOSE = 0
 
 class VideoBuffer(object):
     def __init__(self,vidfile,start=None,stop=None,historysize=1):
@@ -57,7 +59,7 @@ class VideoBuffer(object):
 
     def seek(self,nframes):
         if self.live:
-            print "Error: Seek not available with live streams"
+            if VERBOSE: print "Error: Seek not available with live streams"
         else:
             framenum = self.cap.get(cv2.CAP_PROP_POS_FRAMES)+nframes-self._size
             self.cap.set(cv2.CAP_PROP_POS_FRAMES
@@ -84,7 +86,6 @@ class ROSCamBuffer(object):
         self._histsize = historysize
         self._buffer = [(np.array([]),-1)]*self._size
         self._currIdx = 0
-        self._bufferIdx = 0
 
     def shiftBuffer(self,data):
         try:
@@ -96,7 +97,7 @@ class ROSCamBuffer(object):
             raise
 
         if (self._currIdx-self._histsize) <= -self._size:
-            print "ROSCamBuffer WARNING: Buffer overflow"
+            if VERBOSE: print "ROSCamBuffer WARNING: Buffer overflow\r"
         else:
             self._currIdx -= 1
 
@@ -106,8 +107,7 @@ class ROSCamBuffer(object):
     def grab(self,frameIdx=1):
         if frameIdx > 0:
             try: # spin until the buffer has something in it
-                while self._currIdx > -self._histsize or self._buffer[self._currIdx][0].size == 0:
-                    None
+                while self._currIdx > -self._histsize or self._buffer[self._currIdx][0].size == 0: None
             except KeyboardInterrupt:
                 raise
             img, time = self._buffer[self._currIdx]
