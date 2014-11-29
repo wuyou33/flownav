@@ -10,6 +10,7 @@ find_package(catkin REQUIRED COMPONENTS
   ardrone_autonomy
   sensor_msgs
   std_msgs
+  message_generation
 )
 find_package(OpenCV REQUIRED)
 
@@ -47,11 +48,10 @@ find_package(OpenCV REQUIRED)
 ##   * add every package in MSG_DEP_SET to generate_messages(DEPENDENCIES ...)
 
 ## Generate messages in the 'msg' folder
-# add_message_files(
-#   FILES
-#   Message1.msg
-#   Message2.msg
-# )
+add_message_files(
+  FILES
+  ttc.msg
+)
 
 ## Generate services in the 'srv' folder
 # add_service_files(
@@ -68,10 +68,10 @@ find_package(OpenCV REQUIRED)
 # )
 
 ## Generate added messages and services with any dependencies listed here
-# generate_messages(
-#   DEPENDENCIES
-#   sensor_msgs#   std_msgs
-# )
+generate_messages(
+  DEPENDENCIES
+  std_msgs
+)
 
 ###################################
 ## catkin specific configuration ##
@@ -85,7 +85,7 @@ find_package(OpenCV REQUIRED)
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES flownav
-CATKIN_DEPENDS opencv2
+CATKIN_DEPENDS opencv2 message_runtime
 #  DEPENDS system_lib
 )
 
