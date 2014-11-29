@@ -43,9 +43,7 @@ def ClusterKeypoints(keypoints,kphist,img):
                 clust.append(unclusteredKPs.pop(i))
             else:
                 i += 1
-        cl = Cluster(clust,img)
-        if (len(cl.KPs) >= 2):
-            cluster.append(cl)
+        if (len(clust) >= 2): cluster.append(Cluster(clust,img))
 
     return cluster
 
@@ -67,14 +65,14 @@ def MergeClusters(clusters,img):
 
 
 def uniqid_gen():
-    uid = 2 # starts at 2 since default class_id for keypoints can be -1 or +1
+    uid = 2 # starts at 2 since default class_id for keypoints can be +/-1
     while(1):
         yield uid
         uid += 1
 
-#------------------------------------------------------------------------------#
+# ==========================================================
 # process options and set up defaults
-#------------------------------------------------------------------------------#
+# ==========================================================
 import optparse
 import os
  
@@ -156,9 +154,9 @@ if opts.showmatches: cv2.namedWindow(gtemplate_win, flags=cv2.WINDOW_OPENGL|cv2.
 smatch.MAIN_WIN = gmain_win
 smatch.TEMPLATE_WIN = gtemplate_win
 
-#------------------------------------------------------------------------------#
+# ==========================================================
 # Print intro output to user
-#------------------------------------------------------------------------------#
+# ==========================================================
 if VERBOSE:
     print "Options"
     print "-"*len("Options")
@@ -183,12 +181,12 @@ if VERBOSE:
         print "* Press 'f' while drone is landed and level to perform a flat trim"
         print "* Press 'c' when drone is in a stable hover to recalibrate drone's IMU"
 
-#------------------------------------------------------------------------------#
-# additional setup before main loop
-#------------------------------------------------------------------------------#
+# ==========================================================
+# Additional setup before main loop
+# ==========================================================
 # initialize the feature description and matching methods
 bfmatcher = cv2.BFMatcher()
-surf_ui = cv2.SURF(hessianThreshold=opts.threshold,extended=True)
+surf_ui = cv2.SURF(hessianThreshold=opts.threshold,extended=True,upright=True)
 
 # mask out a central portion of the image
 lastFrame, t_last = frmbuf.grab()
@@ -209,9 +207,9 @@ for kp in queryKP: kp.class_id = getuniqid()
 # helper function
 getMatchKPs = lambda x: (queryKP[x.queryIdx],trainKP[x.trainIdx])
 
-#------------------------------------------------------------------------------#
+# ==========================================================
 # main loop
-#------------------------------------------------------------------------------#
+# ==========================================================
 errsum = 0
 kpHist = OrderedDict()
 lastkey = None
@@ -263,7 +261,7 @@ while not rospy.is_shutdown():
         matches = [m for m,mdist in zip(matches,matchdist) if mdist < threshdist]
 
     if not opts.nodraw:
-                        # Draw rectangle around RoI
+        # Draw rectangle around RoI
         cv2.rectangle(dispim,(scrapX,scrapY)
                       ,(currFrame.shape[1]-scrapX,currFrame.shape[0]-scrapY)
                       ,(192,192,192),thickness=2)
@@ -277,7 +275,7 @@ while not rospy.is_shutdown():
     Find an estimate of the scale change for keypoints that are expanding
     Then update the history of expanding keypoints
     '''
-    matches = [m for m in matches if trainKP[m.trainIdx].size > queryKP[m.queryIdx].size]
+    matches = filter(lambda m: trainKP[m.trainIdx].size > queryKP[m.queryIdx].size, matches)
     matches, kpscales = smatch.estimateKeypointExpansion(frmbuf, matches, queryKP, trainKP, kpHist)
 
     if opts.showmatches:
@@ -293,48 +291,37 @@ while not rospy.is_shutdown():
         else:                                   
             t_A = kpHist[clsid].timehist[-1][-1]
 
-        # update matched expanding keypoints with accurate scale
-        # carry over keypoint class ids and update the descriptor
+        # update matched expanding keypoints with accurate scale,
+        # latest keypoint and descriptor
         kpHist[clsid].update(trainKP[m.trainIdx],tdesc[m.trainIdx],t_A,t_curr,scale)
         
     # Update the keypoint history for previously expanding keypoint that were
     # not detected/matched in this frame
-    detected = [kp.class_id for kp in trainKP]
-    for clsid in kpHist:
-        kpHist[clsid].downdate()
-        if kpHist[clsid].age == LAST_DAY:
-            if VERBOSE > 2:     print "Deleting keypoint", clsid            
-            del kpHist[clsid]
-        elif kpHist[clsid].age > 0 and clsid not in detected: 
-            if VERBOSE > 2:     print "Keypoint", clsid, "added to next query."
-            if tdesc is None:   tdesc = kpHist[clsid].descriptor.reshape(1,-1)
-            else:               tdesc = np.r_[tdesc,kpHist[clsid].descriptor.reshape(1,-1)]
-            trainKP.append(kpHist[clsid].keypoint)
+    detected = sorted(map(op.attrgetter('class_id'),trainKP))
+
+    # get rid of old matches
+    kpHist = OrderedDict(filter(lambda kv: kv[1].downdate().age < LAST_DAY, kpHist.items()))
+
+    # keep matches that were missed in this frame
+    missed = filter(lambda k: (kpHist[k].age > 0) and (k not in detected), kpHist)
+    missed = [(kpHist[k].keypoint,kpHist[clsid].descriptor.reshape(1,-1)) for k in missed]
+    if missed:
+        missed_kp, missed_desc = zip(*missed)
+        trainKP.extend( missed_kp )
+        tdesc = missed_desc if tdesc is None else np.r_[tdesc, missed_desc[0]]
 
     '''
     Finally, perform some simple clustering of adjacent keypoints to
     obtain a more accurate estimate of TTC
     '''
     # cluster keypoints and sort my maximum inter-cluster distance
-    clusterpoints = [kpHist[clsid].keypoint for clsid in kpHist]
-    cluster = ClusterKeypoints(clusterpoints,kpHist,currFrame)
-    # if cluster: cluster.sort(key=lambda c: max(c.dist))
+    ttc_cluster = []
+    expandingKPs = filter(lambda x: (x.class_id in kpHist) and (kpHist[x.class_id].age == 0), trainKP)
+    cluster = ClusterKeypoints(expandingKPs, kpHist, currFrame)
     for c in cluster:
-        ttc_hist = []
-        for i,kp in enumerate(c.KPs):
-            # ttc = np.diff(kpHist[kp.class_id].timehist).flatten() / 1000. / (np.array(kpHist[kp.class_id].scalehist) - 1)
-            ttc = 1 / (np.array(kpHist[kp.class_id].scalehist) - 1)            
-            ttc_hist.append(ttc)
-
-        votes = sum(kpHist[kp.class_id].detects for kp in c.KPs)
-        ttc = np.mean([ttc[ttc != 0][-1] for ttc in ttc_hist])
-
-        if VERBOSE > 1: # print the array of time to contact estimates
-            print
-            print "ttc_hist =", [list(row) for row in ttc_hist]
-            print "Overlapping keypoints:", len(c.KPs)
-            print "Votes:", votes
-            print "TTC estimate:", ttc
+        tstep = np.array( map(lambda kp: -op.sub(*kpHist[kp.class_id].timehist[-1]), c.KPs) )
+        scale = np.array( map(lambda kp: kpHist[kp.class_id].scalehist[-1], c.KPs) )
+        ttc_cluster.append(np.median(tstep / scale))
 
     # if kbctrl and cluster:
     #     c = cluster[0]
@@ -353,35 +340,26 @@ while not rospy.is_shutdown():
             cv2.putText(dispim,stat,(10,currFrame.shape[0]-10)
                         ,cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255))
         # Draw expanding keypoints with tags
-        expandingKPs = []
-        for m in matches:
-            qkp = queryKP[m.queryIdx]
-            tkp = trainKP[m.trainIdx]
-            scale = np.array(kpHist[tkp.class_id].scalehist[-1])
-            # tstep = np.diff(kpHist[tkp.class_id].timehist[-1]).flatten() / 1000.
-            tstep = 1
-            ttc = tstep / (scale - 1)
+        # expandingKPs = []
+        # for m in matches:
+        #     qkp = queryKP[m.queryIdx]
+        #     tkp = trainKP[m.trainIdx]
+        #     scale = kpHist[tkp.class_id].scalehist[-1]
+        #     tstep = -np.diff(kpHist[tkp.class_id].timehist[-1])
+        #     # tstep = 1
+        #     ttc = tstep / scale
 
-            kpinfo = "(%d,%.2f,%.3f)" % (kpHist[tkp.class_id].detects,scale,ttc)
-            cv2.putText(dispim,kpinfo,inttuple(tkp.pt[0]+tkp.size//2,tkp.pt[1]-tkp.size//2)
-                        ,cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255,255,0))
-            expandingKPs.append(kpHist[tkp.class_id].keypoint)
+        #     kpinfo = "(%d,%.2f,%.3f)" % (kpHist[tkp.class_id].detects,scale,ttc)
+        #     cv2.putText(dispim,kpinfo,inttuple(tkp.pt[0]+tkp.size//2,tkp.pt[1]-tkp.size//2)
+        #                 ,cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,0))
+        #     expandingKPs.append(kpHist[tkp.class_id].keypoint)
         cv2.drawKeypoints(dispim, expandingKPs, dispim, color=(0,0,255)
                           , flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
         # Draw clusters with tags
-        for c in cluster:
-            ttc_hist = []
-            for i,kp in enumerate(c.KPs):
-                # tstep = np.diff(kpHist[tkp.class_id].timehist).flatten() / 1000.
-                # ttc = tstep / (np.array(kpHist[kp.class_id].scalehist) - 1)
-                tstep = 1
-                ttc = tstep / (np.array(kpHist[kp.class_id].scalehist) - 1)            
-                ttc_hist.append(ttc)
-            votes = sum(kpHist[kp.class_id].detects for kp in c.KPs)
-            ttc = np.mean([ttc[-1] for ttc in ttc_hist])
-
-            clustinfo = "(%d,%d,%.2f)" % (len(c.KPs),votes,ttc)
+        votes = [sum(kpHist[kp.class_id].detects for kp in c.KPs) for c in cluster]
+        for c, ttc in zip(cluster,ttc_cluster):
+            clustinfo = "(%d,%.2f)" % (len(c.KPs),ttc)
             cv2.putText(dispim,clustinfo,(c.p1[0]-5,c.p1[1])
                         ,cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0,0,255))
 
@@ -390,11 +368,10 @@ while not rospy.is_shutdown():
             if (x_obs-(currFrame.shape[1]//2)) < 0: offset = 50
             if x_obs >= (currFrame.shape[1]//2):    offset = -50
             cv2.arrowedLine(dispim, (currFrame.shape[1]//2,currFrame.shape[0] - 50)
-                            , (currFrame.shape[1]//2+offset,currFrame.shape[0] - 50),(0,255,0),3)
+                            , (currFrame.shape[1]//2+offset,currFrame.shape[0] - 50)
+                            , (0,255,0), 3)
 
-        # draw cluster ranking
-        votes = [sum(kpHist[kp.class_id].detects for kp in c.KPs) for c in cluster]
-        for c in cluster:
+            # draw cluster ranking
             clr = (0,255-sum(kpHist[kp.class_id].detects for kp in c.KPs)*165./max(votes),255)
             cv2.rectangle(dispim,c.p0,c.p1,color=clr,thickness=2)
         
@@ -417,11 +394,12 @@ while not rospy.is_shutdown():
        elif lastkey is not None:
            k = cv2.waitKey(250)%256
            while k not in map(ord,('\r','s','q',' ','m','b','f')): k = cv2.waitKey(250)%256
-       else:
+       elif not frmbuf.live:
            # limit the loop rate to 10 Hz the hacky way for display purposes
            t = (time.time()-t1_loop)
            k = cv2.waitKey(int(max((0.05-t)*1000,1)))%256
-
+       else:
+           k = cv2.waitKey(1)%256
        if k == ord('m'):
            opts.showmatches ^= True
            if opts.showmatches: cv2.namedWindow(gtemplate_win,cv2.WINDOW_OPENGL|cv2.WINDOW_NORMAL)

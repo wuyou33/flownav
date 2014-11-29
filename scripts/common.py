@@ -31,6 +31,7 @@ class KeyPointHistory(object):
     def downdate(self):
         self.age += 1
         self.lastFrameIdx -= 1
+        return self
 
     def __repr__(self):
         return repr(dict((attr,getattr(self,attr)) for attr in dir(self)
