@@ -249,8 +249,8 @@ while not rospy.is_shutdown():
     trainKP, tdesc = surf_ui.detectAndCompute(currFrame,roi)
 
     # Find the best K matches for each keypoint
-    if qdesc is None or tdesc is None: matches = []
-    else:                              matches = bfmatcher.knnMatch(qdesc,tdesc,k=2)
+    if tdesc is None or qdesc is None:  matches = []
+    else:                               matches = bfmatcher.knnMatch(qdesc,tdesc,k=2)
 
     matchdist = []
     filteredmatches = []
@@ -291,14 +291,9 @@ while not rospy.is_shutdown():
     else:
         lastkey = None
 
-    ttc_datum.frame_id = frmbuf.frameNum
-    ttc_datum.timestep = Duration((t_curr-t_last)//1000, ((t_curr-t_last)%1000)*1000000)
     ttc_datum.keypoints = []
     for m,scale in zip(matches,kpscales):
         clsid = trainKP[m.trainIdx].class_id
-        ttc_datum.keypoints.append(kpMsg(x=trainKP[m.trainIdx].pt[0]
-                                         , y=trainKP[m.trainIdx].pt[1]
-                                         , scale=scale, class_id=clsid))
         if clsid not in kpHist:
             kpHist[clsid] = KeyPointHistory()
             t_A = t_last
@@ -308,11 +303,17 @@ while not rospy.is_shutdown():
         # update matched expanding keypoints with accurate scale,
         # latest keypoint and descriptor
         kpHist[clsid].update(trainKP[m.trainIdx],tdesc[m.trainIdx],t_A,t_curr,scale)
+        ttc_datum.keypoints.append(kpMsg(x=trainKP[m.trainIdx].pt[0]
+                                         , y=trainKP[m.trainIdx].pt[1]
+                                         , scale=scale, class_id=clsid
+                                         , detects=kpHist[clsid].detects))
+    ttc_datum.frame_id = frmbuf.frameNum
+    ttc_datum.timestep = Duration(int((t_curr-t_last)/1000), ((t_curr-t_last)%1000)*1000000)
     datalog.write(ttc_datum)
         
     # Update the keypoint history for previously expanding keypoint that were
     # not detected/matched in this frame
-    detected = sorted(map(op.attrgetter('class_id'),trainKP))
+    detected = set(map(op.attrgetter('class_id'),trainKP))
 
     # get rid of old matches
     kpHist = OrderedDict(filter(lambda kv: kv[1].downdate().age < LAST_DAY, kpHist.items()))
@@ -323,7 +324,7 @@ while not rospy.is_shutdown():
     if missed:
         missed_kp, missed_desc = zip(*missed)
         trainKP.extend( missed_kp )
-        tdesc = missed_desc if tdesc is None else np.r_[tdesc, missed_desc[0]]
+        tdesc = missed_desc[0] if tdesc is None else np.r_[tdesc, missed_desc[0]]
 
     '''
     Finally, perform some simple clustering of adjacent keypoints to
