@@ -1,6 +1,11 @@
 #!/usr/bin/env python
 import rospy
+from datalogger import DataLogger
 from std_srvs.srv import Empty
+from genpy.rostime import Duration
+
+from flownav.msg import ttc as ttcMsg
+from flownav.msg import keypoint as kpMsg
 
 import cv2
 import numpy as np
@@ -140,6 +145,7 @@ else:
 
 # start the node and control loop
 rospy.init_node("flownav", anonymous=False)
+datalog = DataLogger()
 
 kbctrl = None
 if opts.camtopic == "/ardrone" and not opts.video:
@@ -153,6 +159,32 @@ cv2.namedWindow(gmain_win, flags=cv2.WINDOW_OPENGL|cv2.WINDOW_NORMAL)
 if opts.showmatches: cv2.namedWindow(gtemplate_win, flags=cv2.WINDOW_OPENGL|cv2.WINDOW_NORMAL)
 smatch.MAIN_WIN = gmain_win
 smatch.TEMPLATE_WIN = gtemplate_win
+
+# ==========================================================
+# Additional setup before main loop
+# ==========================================================
+# initialize the feature description and matching methods
+bfmatcher = cv2.BFMatcher()
+surf_ui = cv2.SURF(hessianThreshold=opts.threshold,extended=True,upright=True)
+
+# mask out a central portion of the image
+lastFrame, t_last = frmbuf.grab()
+roi = np.zeros(lastFrame.shape,np.uint8)
+scrapY, scrapX = lastFrame.shape[0]//8, lastFrame.shape[1]//8
+roi[scrapY:-scrapY, scrapX:-scrapX] = True
+
+if opts.record:
+    video_writer = cv2.VideoWriter(opts.record, -1, fps=10,frameSize=lastFrame.shape, isColor=False)
+
+idgen = uniqid_gen()
+getuniqid = lambda : idgen.next()
+
+# get keypoints and feature descriptors from query image and assign them an id
+queryKP, qdesc = surf_ui.detectAndCompute(lastFrame,roi)
+for kp in queryKP: kp.class_id = getuniqid()
+
+# helper function
+getMatchKPs = lambda x: (queryKP[x.queryIdx],trainKP[x.trainIdx])
 
 # ==========================================================
 # Print intro output to user
@@ -182,37 +214,13 @@ if VERBOSE:
         print "* Press 'c' when drone is in a stable hover to recalibrate drone's IMU"
 
 # ==========================================================
-# Additional setup before main loop
-# ==========================================================
-# initialize the feature description and matching methods
-bfmatcher = cv2.BFMatcher()
-surf_ui = cv2.SURF(hessianThreshold=opts.threshold,extended=True,upright=True)
-
-# mask out a central portion of the image
-lastFrame, t_last = frmbuf.grab()
-roi = np.zeros(lastFrame.shape,np.uint8)
-scrapY, scrapX = lastFrame.shape[0]//8, lastFrame.shape[1]//8
-roi[scrapY:-scrapY, scrapX:-scrapX] = True
-
-if opts.record:
-    video_writer = cv2.VideoWriter(opts.record, -1, fps=10,frameSize=lastFrame.shape, isColor=False)
-
-idgen = uniqid_gen()
-getuniqid = lambda : idgen.next()
-
-# get keypoints and feature descriptors from query image and assign them an id
-queryKP, qdesc = surf_ui.detectAndCompute(lastFrame,roi)
-for kp in queryKP: kp.class_id = getuniqid()
-
-# helper function
-getMatchKPs = lambda x: (queryKP[x.queryIdx],trainKP[x.trainIdx])
-
-# ==========================================================
 # main loop
 # ==========================================================
 errsum = 0
 kpHist = OrderedDict()
 lastkey = None
+ttc_datum = ttcMsg()
+
 while not rospy.is_shutdown():
     currFrame, t_curr = frmbuf.grab()
     t1_loop = time.time() # loop timer
@@ -283,8 +291,14 @@ while not rospy.is_shutdown():
     else:
         lastkey = None
 
+    ttc_datum.frame_id = frmbuf.frameNum
+    ttc_datum.timestep = Duration((t_curr-t_last)//1000, ((t_curr-t_last)%1000)*1000000)
+    ttc_datum.keypoints = []
     for m,scale in zip(matches,kpscales):
         clsid = trainKP[m.trainIdx].class_id
+        ttc_datum.keypoints.append(kpMsg(x=trainKP[m.trainIdx].pt[0]
+                                         , y=trainKP[m.trainIdx].pt[1]
+                                         , scale=scale, class_id=clsid))
         if clsid not in kpHist:
             kpHist[clsid] = KeyPointHistory()
             t_A = t_last
@@ -294,6 +308,7 @@ while not rospy.is_shutdown():
         # update matched expanding keypoints with accurate scale,
         # latest keypoint and descriptor
         kpHist[clsid].update(trainKP[m.trainIdx],tdesc[m.trainIdx],t_A,t_curr,scale)
+    datalog.write(ttc_datum)
         
     # Update the keypoint history for previously expanding keypoint that were
     # not detected/matched in this frame
@@ -374,7 +389,7 @@ while not rospy.is_shutdown():
             # draw cluster ranking
             clr = (0,255-sum(kpHist[kp.class_id].detects for kp in c.KPs)*165./max(votes),255)
             cv2.rectangle(dispim,c.p0,c.p1,color=clr,thickness=2)
-        
+
     ''''
     Handle input keyboard events
     '''

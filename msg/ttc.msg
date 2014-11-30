@@ -1,5 +1,3 @@
-Header header
-float64 scaleA
-float64 scaleB
-uint16 x
-uint16 y
+uint32 frame_id
+duration timestep
+keypoint[] keypoints

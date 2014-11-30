@@ -18,6 +18,7 @@ class VideoBuffer(object):
         self.stop = stop
         self._buffer = [np.array([])]*historysize
         self._size = historysize
+        self._frameNum = 0
 
         if not self.live:
             if not self.start:
@@ -28,6 +29,17 @@ class VideoBuffer(object):
                 self.stop = self.cap.get(cv2.CAP_PROP_FRAME_COUNT)
 
         stat = self.shiftBuffer(self._size)
+
+    @property
+    def frameNum(self):
+        if not self.live:
+            return self.cap.get(cv2.CAP_PROP_POS_FRAMES)
+        else:
+            return self._frameNum
+
+    @frameNum.setter
+    def frameNum(self,x):
+        self._frameNum = x
 
     def shiftBuffer(self,nshifts=1):
         for i in range(nshifts):
@@ -50,6 +62,7 @@ class VideoBuffer(object):
         if frameIdx > 0:
             if self.shiftBuffer():
                 img, time = self._buffer[-1]
+                self._frameNum += 1
             else:
                 img, time = np.array([]), -1
         else:
@@ -86,6 +99,7 @@ class ROSCamBuffer(object):
         self._histsize = historysize
         self._buffer = [(np.array([]),-1)]*self._size
         self._currIdx = 0
+        self.frameNum = 0
 
     def shiftBuffer(self,data):
         try:
@@ -102,7 +116,7 @@ class ROSCamBuffer(object):
             self._currIdx -= 1
 
         self._buffer[:-1] = self._buffer[1:]
-        self._buffer[-1] = (img,data.header.stamp)
+        self._buffer[-1] = (img, data.header.stamp)
 
     def grab(self,frameIdx=1):
         if frameIdx > 0:
@@ -112,6 +126,7 @@ class ROSCamBuffer(object):
                 raise
             img, time = self._buffer[self._currIdx]
             self._currIdx += 1
+            self.frameNum += 1
         elif (self._currIdx-frameIdx) >= -self._size:
             img, time = self._buffer[self._currIdx-frameIdx]
         else:
