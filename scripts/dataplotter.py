@@ -78,6 +78,9 @@ class Plotter:
         self._indexBuffer = np.arange(len(a))
         self.scrollSize = scrollSize
 
+    @property
+    def index(self): return self.__index
+        
     def roll(self):
         global frames
 
@@ -147,18 +150,29 @@ def listener(callback):
     # anonymous=True flag means that rospy will choose a unique
     # name for our 'listener' node so that multiple listeners can
     # run simultaenously.
-    sys.stdout.write("Attempting to connect to publisher...")
-    rospy.init_node('ttcplotter')
-    rospy.Subscriber("/flownav/data", ttcMsg, callback)
-    print "Connected."
-    # spin() simply keeps python from exiting until this node is stopped
+    print "Attempting to connect to publisher..."
 
+    rospy.init_node('ttcplotter')
+    s = rospy.topics.Subscriber("/flownav/data", ttcMsg, callback)
+    while not rospy.core.is_shutdown() and callback.index == 0:
+        rospy.rostime.wallsleep(0.01)
+    if not rospy.core.is_shutdown(): print "Connected."
+    else:
+        s.unregister()
+        raise rospy.exceptions.ROSInterruptException
+
+    return s
 
 if __name__ == '__main__':
     p = Plotter(databuffer,storeData=False, dataPath='../data/arr.npy')
 
-    listener(p)
-    anim = animation.FuncAnimation(fig, animate, init_func=init, blit=False, interval=100)
+    try:
+        sub = listener(p)
+    except rospy.exceptions.ROSInterruptException:
+        p.close()
+        sys.exit(1)
 
+    anim = animation.FuncAnimation(fig, animate, init_func=init, blit=False, interval=100)
     plt.show()
     p.close()
+    sub.unregister()
