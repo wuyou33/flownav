@@ -5,7 +5,7 @@ from common import *
 VERBOSE = 0
 TEMPLATE_WIN = None
 MAIN_WIN = None
-KEYPOINT_SCALE = 1.25
+KEYPOINT_SCALE = 1.1
 
 scalerange = 1.0+np.arange(0.5+0.0125,step=0.0125)
 
@@ -144,7 +144,7 @@ def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist, metho
         # determine if the min match is acceptable
         res_argmin = np.nanargmin(res)
         scalemin = scalerange[res_argmin]
-        if scalemin > 1.08 and res[res_argmin] < 0.7*res[0]:
+        if scalemin > 1.2 and res[res_argmin] < 0.8*res[0]:
             scale_argmin.append(scalemin)
             expandingMatches.append(m)
 

@@ -17,7 +17,7 @@ import framebuffer as fbuf
 import scale_matching as smatch
 
 import operator as op
-from keyboard_control import KeyboardController,CharMap,KeyMapping
+from dronecontroller.keyboard import KeyboardController,CharMap,KeyMapping
 from collections import OrderedDict
 
 import time,sys
@@ -105,6 +105,10 @@ parser.add_option("--no-draw", dest="nodraw"
                   , action="store_true", default=False
                   , help="Don't draw on display image. (true)")
 
+parser.add_option("--loop", dest="loop"
+                  , action="store_true", default=False
+                  , help="Loop video. (%(default)s)")
+
 parser.add_option("--video-topic", dest="camtopic", default="/ardrone"
                   , help="Specify the topic for camera feed ('/ardrone').")
 
@@ -139,7 +143,8 @@ video_writer = opts.record
 if opts.video:
     try:                opts.video = int(opts.video)
     except ValueError:  pass
-    frmbuf = VideoBuffer(opts.video,opts.start,opts.stop,historysize=LAST_DAY+1)
+    frmbuf = VideoBuffer(opts.video,opts.start,opts.stop,historysize=LAST_DAY+1
+                         , loop=opts.loop)
 else:
     frmbuf = ROSCamBuffer(opts.camtopic+"/image_raw",historysize=LAST_DAY+1,buffersize=30)
 
@@ -178,8 +183,6 @@ if opts.record:
 
 idgen = uniqid_gen()
 getuniqid = lambda : idgen.next()
-
-# get keypoints and feature descriptors from query image and assign them an id
 queryKP, qdesc = surf_ui.detectAndCompute(lastFrame,roi)
 for kp in queryKP: kp.class_id = getuniqid()
 
@@ -216,13 +219,20 @@ if VERBOSE:
 # ==========================================================
 # main loop
 # ==========================================================
-errsum = 0
+# errsum = 0
 kpHist = OrderedDict()
-lastkey = None
 ttc_datum = ttcMsg()
-
 while not rospy.is_shutdown():
+    if frmbuf.looped:
+        kpHist.clear()
+        lastFrame, t_last = currFrame, t_curr
+        queryKP, qdesc = surf_ui.detectAndCompute(lastFrame,roi)
+        idgen = uniqid_gen()
+        getuniqid = lambda : idgen.next()
+        for kp in queryKP: kp.class_id = getuniqid()
+        frmbuf.looped = False
     currFrame, t_curr = frmbuf.grab()
+
     t1_loop = time.time() # loop timer
     if not currFrame.size: break
     dispim = cv2.cvtColor(currFrame,cv2.COLOR_GRAY2BGR)
@@ -256,7 +266,7 @@ while not rospy.is_shutdown():
     filteredmatches = []
     for m in matches:                           # Filter out poor matches by
                                                 # ratio test , maximum (descriptor) distance
-        if (len(m)==2 and m[0].distance >= 0.6*m[1].distance) or m[0].distance >= 0.25:
+        if (len(m)==2 and m[0].distance >= 0.8*m[1].distance) or m[0].distance >= 0.25:
             continue
         filteredmatches.append(m[0])
         qkp, tkp = getMatchKPs(m[0])
@@ -297,18 +307,22 @@ while not rospy.is_shutdown():
         if clsid not in kpHist:
             kpHist[clsid] = KeyPointHistory()
             t_A = t_last
-        else:                                   
+        else:                     
             t_A = kpHist[clsid].timehist[-1][-1]
 
         # update matched expanding keypoints with accurate scale,
         # latest keypoint and descriptor
         kpHist[clsid].update(trainKP[m.trainIdx],tdesc[m.trainIdx],t_A,t_curr,scale)
+
         ttc_datum.keypoints.append(kpMsg(x=trainKP[m.trainIdx].pt[0]
                                          , y=trainKP[m.trainIdx].pt[1]
                                          , scale=scale, class_id=clsid
-                                         , detects=kpHist[clsid].detects))
+                                         , detects=kpHist[clsid].detects
+                                         , trainSize=trainKP[m.trainIdx].size
+                                         , querySize=queryKP[m.queryIdx].size))
     ttc_datum.frame_id = frmbuf.frameNum
     ttc_datum.timestep = Duration(int((t_curr-t_last)/1000), ((t_curr-t_last)%1000)*1000000)
+    ttc_datum.keypoints = sorted(ttc_datum.keypoints, key=op.attrgetter('detects','scale'), reverse=True)[:10]
     datalog.write(ttc_datum)
         
     # Update the keypoint history for previously expanding keypoint that were
@@ -335,8 +349,8 @@ while not rospy.is_shutdown():
     expandingKPs = filter(lambda x: (x.class_id in kpHist) and (kpHist[x.class_id].age == 0), trainKP)
     cluster = ClusterKeypoints(expandingKPs, kpHist, currFrame)
     for c in cluster:
-        tstep = np.array( map(lambda kp: -op.sub(*kpHist[kp.class_id].timehist[-1]), c.KPs) )
-        scale = np.array( map(lambda kp: kpHist[kp.class_id].scalehist[-1], c.KPs) )
+        tstep = np.array( [-op.sub(*kpHist[kp.class_id].timehist[-1]) for kp in c.KPs] )
+        scale = np.array( [kpHist[kp.class_id].scalehist[-1] for kp in c.KPs] )
         ttc_cluster.append(np.median(tstep / scale))
 
     # if kbctrl and cluster:

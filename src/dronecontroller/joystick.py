@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import rospy
 from sensor_msgs.msg import Joy
-from drone_control import DroneController
+from . import DroneController
 
 # define the default mapping between joystick buttons and their corresponding actions
 ButtonEmergency = 3
@@ -23,6 +23,7 @@ ScaleZ = 1.0
 
 class JoystickController(DroneController):
     def __init__(self):
+        super(self.__class__,self).__init__(*args,**kwargs)
         self.joy_sub = rospy.Subscriber('/joy', Joy, self.ReceiveJoystickMessage)
 
     # handles the reception of joystick packets
