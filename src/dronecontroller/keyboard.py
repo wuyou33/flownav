@@ -1,5 +1,5 @@
-from drone_control import DroneStatus,STEP
-from auto_control import AutoController
+from . import DroneController,STEP
+from reactive import ReactiveController
 
 CharMap = dict(   FlightToggle = ' '
                 , StartStopToggle = '\r'
@@ -14,14 +14,11 @@ CharMap = dict(   FlightToggle = ' '
                 , TurnRight= '.')
 KeyMapping = dict(zip(CharMap.keys(),map(ord,CharMap.values())))
 
-class KeyboardController(AutoController):
+class KeyboardController(ReactiveController):
     """
     Thanks to Mike Hammer for providing the base for this class. His code can be
     found at: https://github.com/mikehamer/ardrone_tutorials
     """
-    def __init__(self,*args,**kwargs):
-        super(KeyboardController,self).__init__(*args,**kwargs)
-
     def keyPressEvent(self, key):
         if key == KeyMapping['Emergency']:
             self.SendEmergency()

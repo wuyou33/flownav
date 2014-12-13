@@ -1,11 +1,7 @@
-from drone_control import DroneStatus,DroneController,STEP
-from collections import OrderedDict
-from common import avgKP
+from . import DroneController,STEP
 
-class AutoController(DroneController):
-    def __init__(self,*args,**kwargs):
-        super(AutoController,self).__init__(*args,**kwargs)
 
+class ReactiveController(DroneController):
     def RollLeft(self):
         self.SendCommand(roll = 2*STEP, ncycles=10)
         self.SendCommand(roll = 0)
@@ -46,6 +42,6 @@ class AutoController(DroneController):
 if __name__=='__main__':
     rospy.init_node('ardrone/reactive_controller')
 
-    autoctrl = AutoController()
+    autoctrl = ReactiveController()
 
     rospy.spin()
