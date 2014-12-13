@@ -6,13 +6,15 @@ from flownav.msg import keypoint as kpMsg
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import numpy as np
-import itertools
-import random
+from itertools import cycle, product
+from random import shuffle
 
 BUFSIZE = 160
 SCROLLSIZE = 80
 NTRACKEDKPS = 10
 NMAXLINES = 100
+
+INVALID_INT_VALUE = -1
 
 class Storage:
     def __init__(self, a, path, chunkSize=10):
@@ -25,7 +27,7 @@ class Storage:
     def store(self, a):
         n = len(a)
 
-        if n+self.__index > len(self._buffer):
+        if (n+self.__index) > len(self._buffer):
             self._buffer.resize((len(self._buffer)+self._chunkSize,))
 
         self._buffer[self.__index:self.__index+n] = a.copy()
@@ -48,7 +50,7 @@ class DataSubscriber(object):
         self._range = np.arange(len(a))
 
         self.__index = 0
-        self.__bufferindex = 0
+        self.__bufferindex = 1 # start at 1 to allow for indexing the prev frame
 
         self.subscriber = self.connect()
 
@@ -77,7 +79,7 @@ class DataSubscriber(object):
 
         self._range += self.scrollsize
         self._buffer[:-self.scrollsize] = self._buffer[self.scrollsize:]
-        self._buffer[-self.scrollsize:] = np.nan        
+        self._buffer[-self.scrollsize:] = INVALID_INT_VALUE
 
         self.__bufferindex = self.returnindex-1
 
@@ -102,10 +104,12 @@ class DataSubscriber(object):
             else:
                 i = len(self.lines)
                 self.lines.append(clsid)
+                obj_size[self.__bufferindex-1, i] = kp.querySize
+                obj_id[self.__bufferindex-1, i] = clsid
 
-            obj_id[self.__bufferindex, i] = clsid
             obj_size[self.__bufferindex, i] = kp.trainSize
-            
+            obj_id[self.__bufferindex, i] = clsid
+
         # objSize[self.__bufferindex, 0] = np.mean(kpSizes)
         # objSize[self.__bufferindex, 1:len(kpSizes)+1] = kpSizes
         
@@ -114,7 +118,8 @@ class DataSubscriber(object):
 
     def __exit__(self, exception_type, exception_val, trace):
         self.close()
-        if exception_type is not None: raise
+        if exception_type == rospy.ROSInterruptException:
+            print "Process ended."
         return True
 
     def close(self):
@@ -131,7 +136,16 @@ class DataPlotter(DataSubscriber):
                 markers.append(m)
         except TypeError:
             pass
-    colors = ('b', 'g', 'r', 'c', 'm', 'y', 'k')
+    # colors = ('b', 'g', 'r', 'c', 'm', 'y', 'k')
+    colors=('#a6cee3'
+,'#1f78b4'
+,'#b2df8a'
+,'#33a02c'
+,'#fb9a99'
+,'#e31a1c'
+,'#fdbf6f'
+,'#ff7f00'
+,'#cab2d6')
 
     def __init__(self,a,**kwargs):
         super(self.__class__, self).__init__(a,**kwargs)
@@ -142,10 +156,14 @@ class DataPlotter(DataSubscriber):
         ax.set_ylabel("Patch size"); ax.set_xlabel("Frame")
         ax.grid()
         self.fig.tight_layout()
-        self.combos = list(itertools.product(self.markers,self.colors))
+        self.combos = list(product(self.markers,self.colors))
+        shuffle(self.combos)
+        self.combos = cycle(self.combos)
+
+        self.lastIdx = 0
 
     def add_line(self,**kwargs):
-        marker, color = self.combos[random.randint(0,len(self.combos)-1)]
+        marker, color = self.combos.next()
         ax = self.fig.axes[0]
         if len(ax.lines) == NMAXLINES: ax.lines[0].remove()
 
@@ -153,18 +171,22 @@ class DataPlotter(DataSubscriber):
         return self.fig.axes[0].add_line(line)
 
     def update_plot(self):
+        # if self.lastIdx == self.index: raise rospy.ROSInterruptException
+        self.lastIdx = self.index
+
         ax = self.fig.axes[0]
         obj_size = self._buffer['size']
         obj_id = self._buffer['id']
         lines = self.lines
+
         if not lines: return
         
         axlabels = [line.get_label() for line in ax.lines]
         for i,line_id in enumerate(lines):
-            if line_id not in axlabels:
+            if str(line_id) not in axlabels:
                 line = self.add_line(label=line_id)
             else:
-                line = ax.lines[axlabels.index(line_id)]
+                line = ax.lines[axlabels.index(str(line_id))]
 
             mask = obj_id[:,i] == line_id
             line.set_data(self._range[mask], obj_size[mask,i])
@@ -174,15 +196,14 @@ class DataPlotter(DataSubscriber):
         ax.set_xlim(self._range[0],self._range[-1])
 
         handles, labels = ax.get_legend_handles_labels()
-        ax.legend(labels[-len(self.lines):])
-        self.fig.set_size_inches(*self.fig.get_size_inches())
+        ax.legend(labels[-NTRACKEDKPS:])
+        # self.fig.set_size_inches(*self.fig.get_size_inches())
         self.fig.canvas.draw()
 
-
 if __name__ == '__main__':
-    buffer_dtype = [('size',np.uint32,(NTRACKEDKPS,)), ('id',np.uint32,(NTRACKEDKPS,))]
+    buffer_dtype = [('size',np.int64,(NTRACKEDKPS,)), ('id',np.int64,(NTRACKEDKPS,))]
     databuffer = np.zeros((BUFSIZE,),dtype=buffer_dtype)
-    databuffer.fill(np.nan)
+    databuffer[:] = INVALID_INT_VALUE
 
     dataPath = sys.argv[1] if len(sys.argv)>1 else '../data/arr.npy'
     storeData = len(sys.argv)>1
