@@ -78,63 +78,58 @@ def uniqid_gen():
 # ==========================================================
 # process options and set up defaults
 # ==========================================================
-import optparse
+import argparse
 import os
  
-parser = optparse.OptionParser(usage="flownav.py [options]")
-parser.add_option("-b", "--bag", dest="bag", default=None
+parser = argparse.ArgumentParser(usage="flownav.py [options]")
+parser.add_argument("-b", "--bag", dest="bag", default=None
                   , help="Use feed from a ROS bagged recording. (don't)")
 
-# parser.add_option("-l", "--log", dest="log", default=None
-#                   , help="Specify where to output intermediate analysis results. (don't)")
-
-parser.add_option("--threshold", dest="threshold", type=float, default=2000.
+parser.add_argument("--threshold", dest="threshold", type=float, default=2000.
                   , help="Set the Hessian threshold for keypoint detection.")
 
-parser.add_option("-m", "--draw-scale-match", dest="showmatches"
-                  , action="store_true", default=False
-                  , help="Show scale matches for each expanding keypoint.")
+parser.add_argument("-m", "--draw-scale-match", dest="showmatches"
+                    , action="store_true", default=False
+                    , help="Show scale matches for each expanding keypoint.")
 
-parser.add_option("-v", "--verbose", dest="verbose", action="count", default=1
-                  , help="Print verbose output to stdout. Multiple v's for more verbosity.")
+parser.add_argument("-v", "--verbose", dest="verbose", action="count", default=1
+                    , help="Print verbose output to stdout. Multiple v's for more verbosity.")
 
-parser.add_option("-q", "--quiet", dest="quiet", default=False, action='store_true'
-                  , help="Quiet all output to stdout. (don't)")
+parser.add_argument("-q", "--quiet", dest="quiet", default=False, action='store_true'
+                    , help="Quiet all output to stdout. (%(default)s)")
 
-parser.add_option("--no-draw", dest="nodraw"
-                  , action="store_true", default=False
-                  , help="Don't draw on display image. (true)")
+parser.add_argument("--draw-keypoint-tags", dest="drawkptags", action="store_true", default=False
+                    , help="Draw tags for individual expanding keypoints.")
 
-parser.add_option("--loop", dest="loop"
-                  , action="store_true", default=False
-                  , help="Loop video. (%(default)s)")
+parser.add_argument("--no-draw", dest="nodraw", action="store_true", default=False
+                    , help="Don't draw on display image. (true)")
 
-parser.add_option("--video-topic", dest="camtopic", default="/ardrone"
-                  , help="Specify the topic for camera feed ('/ardrone').")
+parser.add_argument("--loop", dest="loop", action="store_true", default=False
+                    , help="Loop video. (%(default)s)")
 
-parser.add_option("--video-file", dest="video", default=None
-                  , help="Load a video file to test.")
+parser.add_argument("--video-topic", dest="camtopic", default="/ardrone"
+                    , help="Specify the topic for camera feed (%(default)r).")
 
-parser.add_option("-r","--record-video", dest="record", default=None
-                  , help="Record session to video file.")
+parser.add_argument("--video-file", dest="video", default=None
+                    , help="Load a video file to test.")
 
-parser.add_option("--start", dest="start"
-                  , type="int", default=0
-                  , help="Starting frame number for video file analysis.")
+parser.add_argument("-r","--record-video", dest="record", default=None
+                    , help="Record session to video file.")
 
-parser.add_option("--stop", dest="stop"
-                  , type="int", default=None
-                  , help="Stop frame number for video file analysis.")
+parser.add_argument("--start", dest="start", type=int, default=0
+                    , help="Starting frame number for video file analysis.")
 
-(opts, args) = parser.parse_args()
+parser.add_argument("--stop", dest="stop", type=int, default=None
+                    , help="Stop frame number for video file analysis.")
+
+opts = parser.parse_args()
 
 VERBOSE = 0 if opts.quiet else opts.verbose
 fbuf.VERBOSE = smatch.VERBOSE = VERBOSE
 
 if opts.bag:
     from subprocess import Popen
-    DEVNULL = open(os.devnull, 'wb')
-    bagp = Popen(["rosbag","play",opts.bag],stdout=DEVNULL,stderr=DEVNULL)
+    bagp = Popen(["rosbag","play",opts.bag])
 
 # logger = open(opts.log,'wb') if opts.log else None
 
@@ -166,8 +161,6 @@ smatch.MAIN_WIN = gmain_win
 smatch.TEMPLATE_WIN = gtemplate_win
 
 # ==========================================================
-<<<<<<< HEAD:scripts/flownav.py
-=======
 # Additional setup before main loop
 # ==========================================================
 # initialize the feature description and matching methods
@@ -249,7 +242,6 @@ getMatchKPs = lambda x: (queryKP[x.queryIdx],trainKP[x.trainIdx])
 # ==========================================================
 # errsum = 0
 kpHist = OrderedDict()
-ttc_datum = ttcMsg()
 while not rospy.is_shutdown():
     if frmbuf.looped:
         kpHist.clear()
@@ -329,7 +321,7 @@ while not rospy.is_shutdown():
     else:
         lastkey = None
 
-    ttc_datum.keypoints = []
+    keypoints = []
     for m,scale in zip(matches,kpscales):
         clsid = trainKP[m.trainIdx].class_id
         if clsid not in kpHist:
@@ -342,16 +334,17 @@ while not rospy.is_shutdown():
         # latest keypoint and descriptor
         kpHist[clsid].update(trainKP[m.trainIdx],tdesc[m.trainIdx],t_A,t_curr,scale)
 
-        ttc_datum.keypoints.append(kpMsg(x=trainKP[m.trainIdx].pt[0]
-                                         , y=trainKP[m.trainIdx].pt[1]
-                                         , scale=scale, class_id=clsid
-                                         , detects=kpHist[clsid].detects
-                                         , trainSize=trainKP[m.trainIdx].size
-                                         , querySize=queryKP[m.queryIdx].size))
-    ttc_datum.frame_id = frmbuf.frameNum
-    ttc_datum.timestep = Duration(int((t_curr-t_last)/1000), ((t_curr-t_last)%1000)*1000000)
-    ttc_datum.keypoints = sorted(ttc_datum.keypoints, key=op.attrgetter('detects','scale'), reverse=True)[:10]
-    datalog.write(ttc_datum)
+        keypoints.append(kpMsg(x=trainKP[m.trainIdx].pt[0]
+                               , y=trainKP[m.trainIdx].pt[1]
+                               , scale=scale, class_id=clsid
+                               , detects=kpHist[clsid].detects
+                               , trainSize=trainKP[m.trainIdx].size
+                               , querySize=queryKP[m.queryIdx].size))
+    keypoints=sorted(keypoints, key=op.attrgetter('scale','detects'), reverse=True)[:10]
+    datalog.write(frame_id=frmbuf.frameNum
+                  , timestep=Duration(int((t_curr-t_last)/1000)
+                                      , ((t_curr-t_last)%1000)*1e6)
+                  , keypoints=keypoints)
         
     # Update the keypoint history for previously expanding keypoint that were
     # not detected/matched in this frame
@@ -377,7 +370,7 @@ while not rospy.is_shutdown():
     expandingKPs = filter(lambda x: (x.class_id in kpHist) and (kpHist[x.class_id].age == 0), trainKP)
     cluster = ClusterKeypoints(expandingKPs, kpHist, currFrame)
     for c in cluster:
-        tstep = np.array( [-op.sub(*kpHist[kp.class_id].timehist[-1]) for kp in c.KPs] )
+        tstep = np.array( [op.sub(*reversed(kpHist[kp.class_id].timehist[-1])) for kp in c.KPs] )
         scale = np.array( [kpHist[kp.class_id].scalehist[-1] for kp in c.KPs] )
         ttc_cluster.append(np.median(tstep / scale))
 
@@ -398,19 +391,20 @@ while not rospy.is_shutdown():
             cv2.putText(dispim,stat,(10,currFrame.shape[0]-10)
                         ,cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255))
         # Draw expanding keypoints with tags
-        # expandingKPs = []
-        # for m in matches:
-        #     qkp = queryKP[m.queryIdx]
-        #     tkp = trainKP[m.trainIdx]
-        #     scale = kpHist[tkp.class_id].scalehist[-1]
-        #     tstep = -np.diff(kpHist[tkp.class_id].timehist[-1])
-        #     # tstep = 1
-        #     ttc = tstep / scale
+        if opts.drawkptags:
+            expandingKPs = []
+            for m in matches:
+                qkp = queryKP[m.queryIdx]
+                tkp = trainKP[m.trainIdx]
+                scale = kpHist[tkp.class_id].scalehist[-1]
+                tstep = -np.diff(kpHist[tkp.class_id].timehist[-1])
+                # tstep = 1
+                ttc = tstep / scale
 
-        #     kpinfo = "(%d,%.2f,%.3f)" % (kpHist[tkp.class_id].detects,scale,ttc)
-        #     cv2.putText(dispim,kpinfo,inttuple(tkp.pt[0]+tkp.size//2,tkp.pt[1]-tkp.size//2)
-        #                 ,cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,0))
-        #     expandingKPs.append(kpHist[tkp.class_id].keypoint)
+                kpinfo = "(%d,%.2f,%.3f)" % (tkp.class_id,scale,ttc)
+                cv2.putText(dispim,kpinfo,inttuple(tkp.pt[0]+tkp.size//2,tkp.pt[1]-tkp.size//2)
+                            ,cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,0))
+                expandingKPs.append(kpHist[tkp.class_id].keypoint)
         cv2.drawKeypoints(dispim, expandingKPs, dispim, color=(0,0,255)
                           , flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 

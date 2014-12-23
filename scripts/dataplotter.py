@@ -45,6 +45,7 @@ class DataSubscriber(object):
         self.scrollsize = scrollsize
         self.returnindex = self.buffersize - self.scrollsize
         self.lines = self.lastlines = []
+        self.connections = []
 
         self._buffer = a
         self._range = np.arange(len(a))
@@ -123,8 +124,10 @@ class DataSubscriber(object):
         return True
 
     def close(self):
-        if self.storage is not None: self.storage.close()
         self.subscriber.unregister()
+        if self.storage is not None: self.storage.close()
+        for cid in self.connections:
+            self.fig.canvas.mpl_disconnect(cid)
         return True
 
         
@@ -138,14 +141,14 @@ class DataPlotter(DataSubscriber):
             pass
     # colors = ('b', 'g', 'r', 'c', 'm', 'y', 'k')
     colors=('#a6cee3'
-,'#1f78b4'
-,'#b2df8a'
-,'#33a02c'
-,'#fb9a99'
-,'#e31a1c'
-,'#fdbf6f'
-,'#ff7f00'
-,'#cab2d6')
+            ,'#1f78b4'
+            ,'#b2df8a'
+            ,'#33a02c'
+            ,'#fb9a99'
+            ,'#e31a1c'
+            ,'#fdbf6f'
+            ,'#ff7f00'
+            ,'#cab2d6')
 
     def __init__(self,a,**kwargs):
         super(self.__class__, self).__init__(a,**kwargs)
@@ -160,7 +163,14 @@ class DataPlotter(DataSubscriber):
         shuffle(self.combos)
         self.combos = cycle(self.combos)
 
+        cid = self.fig.canvas.mpl_connect('resize_event', self.resize)
+        self.connections.append(cid)
+
         self.lastIdx = 0
+
+    def resize(self,event):
+        print "Yeah!"
+        self.fig.canvas.SetSizeWH(event.width,event.height)
 
     def add_line(self,**kwargs):
         marker, color = self.combos.next()
@@ -171,7 +181,7 @@ class DataPlotter(DataSubscriber):
         return self.fig.axes[0].add_line(line)
 
     def update_plot(self):
-        # if self.lastIdx == self.index: raise rospy.ROSInterruptException
+        if self.lastIdx == self.index: return
         self.lastIdx = self.index
 
         ax = self.fig.axes[0]
@@ -184,10 +194,10 @@ class DataPlotter(DataSubscriber):
         axlabels = [line.get_label() for line in ax.lines]
         for i,line_id in enumerate(lines):
             if str(line_id) not in axlabels:
-                line = self.add_line(label=line_id)
+                line = self.add_line(label=line_id,alpha=0.75)
             else:
-                line = ax.lines[axlabels.index(str(line_id))]
-
+                line = ax.lines.pop(axlabels.index(str(line_id)))
+                ax.lines.append(line)
             mask = obj_id[:,i] == line_id
             line.set_data(self._range[mask], obj_size[mask,i])
 
@@ -196,19 +206,20 @@ class DataPlotter(DataSubscriber):
         ax.set_xlim(self._range[0],self._range[-1])
 
         handles, labels = ax.get_legend_handles_labels()
-        ax.legend(labels[-NTRACKEDKPS:])
-        # self.fig.set_size_inches(*self.fig.get_size_inches())
+        ax.legend(reversed(handles[-NTRACKEDKPS:])
+                  , reversed(labels[-NTRACKEDKPS:]))
         self.fig.canvas.draw()
+
 
 if __name__ == '__main__':
     buffer_dtype = [('size',np.int64,(NTRACKEDKPS,)), ('id',np.int64,(NTRACKEDKPS,))]
     databuffer = np.zeros((BUFSIZE,),dtype=buffer_dtype)
     databuffer[:] = INVALID_INT_VALUE
 
-    dataPath = sys.argv[1] if len(sys.argv)>1 else '../data/arr.npy'
+    dataPath = sys.argv[1] if len(sys.argv)>1 else None
     storeData = len(sys.argv)>1
 
     with DataPlotter(databuffer,storeData=storeData,dataPath=dataPath) as p:
         while not rospy.core.is_shutdown():
             p.update_plot()
-            rospy.rostime.wallsleep(0.1)
+            plt.pause(0.1)

@@ -5,9 +5,9 @@ from common import *
 VERBOSE = 0
 TEMPLATE_WIN = None
 MAIN_WIN = None
-KEYPOINT_SCALE = 1.1
-
-scalerange = 1.0+np.arange(0.5+0.0125,step=0.0125)
+KEYPOINT_SCALE = 1.2/9*20
+SEARCH_RES = 20
+scalerange = 1 + (np.arange(11)/float(SEARCH_RES))
 
 def drawTemplateMatches(frmbuf,matches,queryKPs,trainKPs,kphist,scales,dispim=None):
     tdispim = dispim.copy() if dispim is not None else frmbuf.grab(0)[0].copy()
