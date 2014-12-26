@@ -7,7 +7,7 @@ TEMPLATE_WIN = None
 MAIN_WIN = None
 KEYPOINT_SCALE = 1.2/9*20
 SEARCH_RES = 20
-scalerange = 1 + (np.arange(11)/float(SEARCH_RES))
+scalerange = 1 + np.arange(SEARCH_RES+1)/float(2*SEARCH_RES)
 
 def drawTemplateMatches(frmbuf,matches,queryKPs,trainKPs,kphist,scales,dispim=None):
     tdispim = dispim.copy() if dispim is not None else frmbuf.grab(0)[0].copy()
@@ -15,9 +15,8 @@ def drawTemplateMatches(frmbuf,matches,queryKPs,trainKPs,kphist,scales,dispim=No
     k = None
     trainImg = frmbuf.grab(0)[0]
     for m,scale in zip(matches,scales):
-        qkp = copyKP(queryKPs[m.queryIdx])
+        qkp = queryKPs[m.queryIdx]
         tkp = trainKPs[m.trainIdx]
-        qkp.size *= KEYPOINT_SCALE
 
         # grab the frame where the keypoint was last detected
         fidx = kphist[qkp.class_id].lastFrameIdx if qkp.class_id in kphist else -1
@@ -25,21 +24,21 @@ def drawTemplateMatches(frmbuf,matches,queryKPs,trainKPs,kphist,scales,dispim=No
 
         # /* Extract the query and train image patch and normalize them. */ #
         x_qkp,y_qkp = qkp.pt
-        r = qkp.size // 2
+        r = qkp.size*KEYPOINT_SCALE // 2
         x0,y0 = trunc_coords(queryImg.shape,(x_qkp-r, y_qkp-r))
         x1,y1 = trunc_coords(queryImg.shape,(x_qkp+r, y_qkp+r))
         querypatch = queryImg[y0:y1, x0:x1]
         querypatch = (querypatch-np.mean(querypatch))/np.std(querypatch)
 
         x_tkp,y_tkp = tkp.pt
-        r = qkp.size*scalerange[-1] // 2        
+        r = qkp.size*KEYPOINT_SCALE*scalerange[-1] // 2        
         x0,y0 = trunc_coords(trainImg.shape,(x_tkp-r, y_tkp-r))
         x1,y1 = trunc_coords(trainImg.shape,(x_tkp+r, y_tkp+r))
         trainpatch = trainImg[y0:y1, x0:x1]
         trainpatch = (trainpatch-np.mean(trainpatch))/np.std(trainpatch)
 
         # recalculate the best matching scaled template
-        r = qkp.size*scale // 2
+        r = qkp.size*KEYPOINT_SCALE*scale // 2
         x_tkp,y_tkp = x_tkp-x0,y_tkp-y0
         x0,y0 = trunc_coords(trainpatch.shape,(x_tkp-r, y_tkp-r))
         x1,y1 = trunc_coords(trainpatch.shape,(x_tkp+r, y_tkp+r))
@@ -91,17 +90,16 @@ def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist, metho
     trainImg = frmbuf.grab(0)[0]
     res = np.zeros(len(scalerange))
     for m in matches:
-        qkp = copyKP(queryKPs[m.queryIdx])
+        qkp = queryKPs[m.queryIdx]
         tkp = trainKPs[m.trainIdx]
-        qkp.size *= KEYPOINT_SCALE
 
         # grab the frame where the keypoint was last detected
         fidx = kphist[qkp.class_id].lastFrameIdx if qkp.class_id in kphist else -1
         queryImg = frmbuf.grab(fidx)[0]
 
-        # /* Extract the query and train image patch and normalize them. */ #
+        # Extract the query and train image patch and normalize them
         x_qkp,y_qkp = qkp.pt
-        r = qkp.size // 2
+        r = qkp.size * KEYPOINT_SCALE // 2
         x0,y0 = trunc_coords(queryImg.shape,(x_qkp-r, y_qkp-r))
         x1,y1 = trunc_coords(queryImg.shape,(x_qkp+r, y_qkp+r))
         querypatch = queryImg[y0:y1, x0:x1]
@@ -109,7 +107,7 @@ def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist, metho
         querypatch = (querypatch-np.mean(querypatch))/np.std(querypatch)
 
         x_tkp,y_tkp = tkp.pt
-        r = qkp.size*scalerange[-1] // 2
+        r = qkp.size*KEYPOINT_SCALE*scalerange[-1] // 2
         x0,y0 = trunc_coords(trainImg.shape,(x_tkp-r, y_tkp-r))
         x1,y1 = trunc_coords(trainImg.shape,(x_tkp+r, y_tkp+r))
         trainpatch = trainImg[y0:y1, x0:x1]
@@ -120,14 +118,14 @@ def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist, metho
         res[:] = np.nan
         x_tkp,y_tkp = x_tkp-x0,y_tkp-y0
         for i,scale in enumerate(scalerange):
-            r = qkp.size*scale // 2
+            r = qkp.size*KEYPOINT_SCALE*scale // 2
             x0,y0 = trunc_coords(trainpatch.shape,(x_tkp-r, y_tkp-r))
             x1,y1 = trunc_coords(trainpatch.shape,(x_tkp+r, y_tkp+r))
             scaledtrain = trainpatch[y0:y1, x0:x1]
             if not scaledtrain.size: continue
 
             scaledquery = cv2.resize(querypatch,scaledtrain.shape[::-1]
-                                     , fx=scale,fy=scale
+                                     , fx=scale, fy=scale
                                      , interpolation=cv2.INTER_LINEAR)
 
             if method == 'corr':
@@ -138,13 +136,13 @@ def estimateKeypointExpansion(frmbuf, matches, queryKPs, trainKPs, kphist, metho
                 res[i] = np.sqrt(np.sum((scaledquery-scaledtrain)**2))
             elif method == 'L2sq':
                 res[i] = np.sum((scaledquery-scaledtrain)**2)
-            res[i] /= (scale**2) # normalize over scale
         if all(np.isnan(res)): continue # could not match the feature
+        res /= scalerange**2 # normalize over scale
 
         # determine if the min match is acceptable
         res_argmin = np.nanargmin(res)
         scalemin = scalerange[res_argmin]
-        if scalemin > 1.2 and res[res_argmin] < 0.8*res[0]:
+        if (scalemin > 1.2) and (res[res_argmin] < 0.8*res[0]):
             scale_argmin.append(scalemin)
             expandingMatches.append(m)
 

@@ -16,19 +16,19 @@ NMAXLINES = 100
 
 INVALID_INT_VALUE = -1
 
-class Storage:
-    def __init__(self, a, path, chunkSize=10):
+class Storage(object):
+    def __init__(self, a, savepath , chunksize=10):
         self.__index = 0
-        self._chunkSize = chunkSize*len(a)
+        self._chunksize = chunksize*len(a)
         self._buffer = np.zeros_like(a)
-        self._buffer.resize((self._chunkSize,))
-        self.path = path
+        self._buffer.resize((self._chunksize,))
+        self.path = savepath
 
     def store(self, a):
         n = len(a)
 
         if (n+self.__index) > len(self._buffer):
-            self._buffer.resize((len(self._buffer)+self._chunkSize,))
+            self._buffer.resize((len(self._buffer)+self._chunksize,))
 
         self._buffer[self.__index:self.__index+n] = a.copy()
         self.__index += n
@@ -39,13 +39,12 @@ class Storage:
 
 
 class DataSubscriber(object):
-    def __init__(self, a, storeData=False, dataPath='arr.npy', scrollsize=SCROLLSIZE):
-        self.storage = Storage(a, dataPath) if storeData else None
+    def __init__(self, a, savepath=None, scrollsize=SCROLLSIZE):
+        self._storage = Storage(a, savepath=savepath) if savepath else None
         self.buffersize = len(a)
         self.scrollsize = scrollsize
         self.returnindex = self.buffersize - self.scrollsize
-        self.lines = self.lastlines = []
-        self.connections = []
+        self.keypoints = self.prevkeypoints = []
 
         self._buffer = a
         self._range = np.arange(len(a))
@@ -56,27 +55,29 @@ class DataSubscriber(object):
         self.subscriber = self.connect()
 
     def connect(self):
-        print "Attempting to connect to publisher..."
-
         rospy.init_node('ttcplotter')
 
+        s = rospy.topics.Subscriber("/flownav/data", ttcMsg, self)
+
+        print "Listening for publisher..."
         try:
-            s = rospy.topics.Subscriber("/flownav/data", ttcMsg, self)
             while not rospy.core.is_shutdown() and self.__index == 0:
                 rospy.rostime.wallsleep(0.01)
-            if not rospy.core.is_shutdown(): print "Connected."
         except ROSInterruptException:
             s.unregister()
             raise
 
+        if not rospy.core.is_shutdown(): print "Connected."
+
         return s
 
     @property
-    def index(self): return self.__index
+    def index(self):
+        return self.__index
         
     def roll(self):
-        if self.storage is not None:
-            self.storage.store(self._buffer[:self.scrollsize])
+        if self._storage is not None:
+            self._storage.store(self._buffer[:self.scrollsize])
 
         self._range += self.scrollsize
         self._buffer[:-self.scrollsize] = self._buffer[self.scrollsize:]
@@ -94,27 +95,27 @@ class DataSubscriber(object):
         obj_size = self._buffer['size']
         obj_id = self._buffer['id']
 
-        for l in set(self.lastlines).difference(datum.keypoints[:NTRACKEDKPS]):
-            self.lines.remove(l)
+        for l in set(self.prevkeypoints).difference(datum.keypoints[:NTRACKEDKPS]):
+            self.keypoints.remove(l)
 
         for kp in datum.keypoints[:NTRACKEDKPS]:
             clsid = kp.class_id
 
-            if clsid in self.lines:
-                i = self.lines.index(clsid)
+            if clsid in self.keypoints:
+                i = self.keypoints.index(clsid)
             else:
-                i = len(self.lines)
-                self.lines.append(clsid)
-                obj_size[self.__bufferindex-1, i] = kp.querySize
-                obj_id[self.__bufferindex-1, i] = clsid
+                i = len(self.keypoints)
+                self.keypoints.append(clsid)
+                # obj_size[self.__bufferindex-1, i] = kp.trainSize/float(kp.querySize)
+                # obj_id[self.__bufferindex-1, i] = clsid
 
-            obj_size[self.__bufferindex, i] = kp.trainSize
+            obj_size[self.__bufferindex, i] = kp.trainSize/float(kp.querySize)
             obj_id[self.__bufferindex, i] = clsid
 
         # objSize[self.__bufferindex, 0] = np.mean(kpSizes)
         # objSize[self.__bufferindex, 1:len(kpSizes)+1] = kpSizes
         
-        self.lastlines = self.lines
+        self.prevkeypoints = self.keypoints
         self.__bufferindex += 1
 
     def __exit__(self, exception_type, exception_val, trace):
@@ -125,9 +126,8 @@ class DataSubscriber(object):
 
     def close(self):
         self.subscriber.unregister()
-        if self.storage is not None: self.storage.close()
-        for cid in self.connections:
-            self.fig.canvas.mpl_disconnect(cid)
+        if self._storage is not None:
+            self._storage.close()
         return True
 
         
@@ -135,11 +135,10 @@ class DataPlotter(DataSubscriber):
     markers = []
     for m in plt.Line2D.markers:
         try:
-            if len(m) == 1 and m != ' ':
+            if len(m) == 1 and m not in (' ','x'):
                 markers.append(m)
         except TypeError:
             pass
-    # colors = ('b', 'g', 'r', 'c', 'm', 'y', 'k')
     colors=('#a6cee3'
             ,'#1f78b4'
             ,'#b2df8a'
@@ -150,27 +149,23 @@ class DataPlotter(DataSubscriber):
             ,'#ff7f00'
             ,'#cab2d6')
 
-    def __init__(self,a,**kwargs):
-        super(self.__class__, self).__init__(a,**kwargs)
+    def __init__(self,*args,**kwargs):
+        super(self.__class__,self).__init__(*args,**kwargs)
+        self.connections = []
 
         plt.ion()
+
         self.fig = plt.figure(figsize=(10.24,7.68),dpi=100,frameon=False)
         ax = self.fig.add_subplot(111)
         ax.set_ylabel("Patch size"); ax.set_xlabel("Frame")
         ax.grid()
         self.fig.tight_layout()
+
         self.combos = list(product(self.markers,self.colors))
         shuffle(self.combos)
         self.combos = cycle(self.combos)
 
-        cid = self.fig.canvas.mpl_connect('resize_event', self.resize)
-        self.connections.append(cid)
-
         self.lastIdx = 0
-
-    def resize(self,event):
-        print "Yeah!"
-        self.fig.canvas.SetSizeWH(event.width,event.height)
 
     def add_line(self,**kwargs):
         marker, color = self.combos.next()
@@ -187,18 +182,18 @@ class DataPlotter(DataSubscriber):
         ax = self.fig.axes[0]
         obj_size = self._buffer['size']
         obj_id = self._buffer['id']
-        lines = self.lines
+        keypoints = self.keypoints
 
-        if not lines: return
+        if not keypoints: return
         
         axlabels = [line.get_label() for line in ax.lines]
-        for i,line_id in enumerate(lines):
-            if str(line_id) not in axlabels:
-                line = self.add_line(label=line_id,alpha=0.75)
+        for i,clsid in enumerate(keypoints):
+            if str(clsid) not in axlabels:
+                line = self.add_line(label=clsid,alpha=0.75)
             else:
-                line = ax.lines.pop(axlabels.index(str(line_id)))
+                line = ax.lines.pop(axlabels.index(str(clsid)))
                 ax.lines.append(line)
-            mask = obj_id[:,i] == line_id
+            mask = obj_id[:,i] == clsid
             line.set_data(self._range[mask], obj_size[mask,i])
 
         ax.relim()
@@ -210,16 +205,20 @@ class DataPlotter(DataSubscriber):
                   , reversed(labels[-NTRACKEDKPS:]))
         self.fig.canvas.draw()
 
+    def close(self):
+        super(self.__class__,self).close()
+        for cid in self.connections:
+            self.fig.canvas.mpl_disconnect(cid)
+
 
 if __name__ == '__main__':
     buffer_dtype = [('size',np.int64,(NTRACKEDKPS,)), ('id',np.int64,(NTRACKEDKPS,))]
     databuffer = np.zeros((BUFSIZE,),dtype=buffer_dtype)
     databuffer[:] = INVALID_INT_VALUE
 
-    dataPath = sys.argv[1] if len(sys.argv)>1 else None
-    storeData = len(sys.argv)>1
+    savepath = sys.argv[1] if len(sys.argv)>1 else None
 
-    with DataPlotter(databuffer,storeData=storeData,dataPath=dataPath) as p:
+    with DataPlotter(databuffer,savepath=savepath) as p:
         while not rospy.core.is_shutdown():
             p.update_plot()
             plt.pause(0.1)

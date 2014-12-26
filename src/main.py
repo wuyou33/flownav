@@ -53,22 +53,6 @@ def ClusterKeypoints(keypoints,kphist,img):
     return cluster
 
 
-def MergeClusters(clusters,img):
-    mergedclusters = []
-    unmergedclusters = sorted(clusters,key=op.attrgetter('pt'))
-    while unmergedclusters:
-        clust = unmergedclusters.pop(0).KPs
-        i = 0
-        while i < len(unmergedclusters):
-            if bboverlap(cl,unmergedclusters[i]):
-                clust += unmergedclusters.pop(i).KPs
-            else:
-                i += 1
-        mergedclusters.append(Cluster(clust,img))
-
-    return mergedclusters
-
-
 def uniqid_gen():
     uid = 2 # starts at 2 since default class_id for keypoints can be +/-1
     while(1):
@@ -98,7 +82,7 @@ parser.add_argument("-v", "--verbose", dest="verbose", action="count", default=1
 parser.add_argument("-q", "--quiet", dest="quiet", default=False, action='store_true'
                     , help="Quiet all output to stdout. (%(default)s)")
 
-parser.add_argument("--draw-keypoint-tags", dest="drawkptags", action="store_true", default=False
+parser.add_argument("--draw-tags", dest="drawtags", action="store_true", default=False
                     , help="Draw tags for individual expanding keypoints.")
 
 parser.add_argument("--no-draw", dest="nodraw", action="store_true", default=False
@@ -130,9 +114,6 @@ fbuf.VERBOSE = smatch.VERBOSE = VERBOSE
 if opts.bag:
     from subprocess import Popen
     bagp = Popen(["rosbag","play",opts.bag])
-
-# logger = open(opts.log,'wb') if opts.log else None
-
 video_writer = opts.record
 
 if opts.video:
@@ -282,10 +263,10 @@ while not rospy.is_shutdown():
     if tdesc is None or qdesc is None:  matches = []
     else:                               matches = bfmatcher.knnMatch(qdesc,tdesc,k=2)
 
+    # Filter out poor matches by ratio test , maximum (descriptor) distance
     matchdist = []
     filteredmatches = []
-    for m in matches:                           # Filter out poor matches by
-                                                # ratio test , maximum (descriptor) distance
+    for m in matches:                           
         if (len(m)==2 and m[0].distance >= 0.8*m[1].distance) or m[0].distance >= 0.25:
             continue
         filteredmatches.append(m[0])
@@ -298,26 +279,27 @@ while not rospy.is_shutdown():
         threshdist = np.mean(stats.trim1(matchdist,0.25)) + 2*np.std(matchdist)
         matches = [m for m,mdist in zip(matches,matchdist) if mdist < threshdist]
 
-    if not opts.nodraw:
-        # Draw rectangle around RoI
+    if not opts.nodraw: # Draw rectangle around RoI
         cv2.rectangle(dispim,(scrapX,scrapY)
                       ,(currFrame.shape[1]-scrapX,currFrame.shape[0]-scrapY)
                       ,(192,192,192),thickness=2)
-        if matches:     # Draw matched keypoints
-            qkp, tkp = zip(*map(getMatchKPs,matches))
-            cv2.drawKeypoints(dispim, qkp, dispim, color=(0,255,0))
-            cv2.drawKeypoints(dispim, tkp, dispim, color=(255,0,0))
-            for q,t in zip(qkp,tkp): cv2.line(dispim, inttuple(*q.pt), inttuple(*t.pt), (0,255,0), 1)
+
+    if not opts.nodraw and matches: # Draw matched keypoints
+        qkp, tkp = zip(*map(getMatchKPs,matches))
+        cv2.drawKeypoints(dispim, qkp, dispim, color=(0,255,0))
+        cv2.drawKeypoints(dispim, tkp, dispim, color=(255,0,0))
+        for q,t in zip(qkp,tkp): cv2.line(dispim, inttuple(*q.pt), inttuple(*t.pt), (0,255,0), 1)
         
     '''
     Find an estimate of the scale change for keypoints that are expanding
     Then update the history of expanding keypoints
     '''
     matches = filter(lambda m: trainKP[m.trainIdx].size > queryKP[m.queryIdx].size, matches)
-    matches, kpscales = smatch.estimateKeypointExpansion(frmbuf, matches, queryKP, trainKP, kpHist)
+    matches, kpscales = smatch.estimateKeypointExpansion(frmbuf, matches, queryKP, trainKP, kpHist, 'L1')
 
     if opts.showmatches:
-        lastkey = smatch.drawTemplateMatches(frmbuf, matches, queryKP, trainKP, kpHist, kpscales, dispim=dispim)
+        lastkey = smatch.drawTemplateMatches(frmbuf, matches, queryKP, trainKP
+                                             , kpHist, kpscales, dispim=dispim)
     else:
         lastkey = None
 
@@ -330,8 +312,8 @@ while not rospy.is_shutdown():
         else:                     
             t_A = kpHist[clsid].timehist[-1][-1]
 
-        # update matched expanding keypoints with accurate scale,
-        # latest keypoint and descriptor
+        # update matched expanding keypoints with accurate scale, latest
+        # keypoint and descriptor
         kpHist[clsid].update(trainKP[m.trainIdx],tdesc[m.trainIdx],t_A,t_curr,scale)
 
         keypoints.append(kpMsg(x=trainKP[m.trainIdx].pt[0]
@@ -380,8 +362,8 @@ while not rospy.is_shutdown():
     #     if (x_obs-currFrame.shape[1]//2) < 0: kbctrl.RollRight()
     #     if x_obs >= currFrame.shape[1]//2: kbctrl.RollLeft()
 
+    # Print out drone status to the image
     if not opts.nodraw:
-        # Print out drone status to the image
         if kbctrl:
             stat = "BATT=%.2f" % (kbctrl.navdata.batteryPercent)
             cv2.putText(dispim,stat,(10,currFrame.shape[0]-10)
@@ -390,44 +372,46 @@ while not rospy.is_shutdown():
             stat = "FRAME %4d/%4d" % (frmbuf.cap.get(cv2.CAP_PROP_POS_FRAMES),frmbuf.stop)
             cv2.putText(dispim,stat,(10,currFrame.shape[0]-10)
                         ,cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255))
-        # Draw expanding keypoints with tags
-        if opts.drawkptags:
-            expandingKPs = []
-            for m in matches:
-                qkp = queryKP[m.queryIdx]
-                tkp = trainKP[m.trainIdx]
-                scale = kpHist[tkp.class_id].scalehist[-1]
-                tstep = -np.diff(kpHist[tkp.class_id].timehist[-1])
-                # tstep = 1
-                ttc = tstep / scale
 
-                kpinfo = "(%d,%.2f,%.3f)" % (tkp.class_id,scale,ttc)
-                cv2.putText(dispim,kpinfo,inttuple(tkp.pt[0]+tkp.size//2,tkp.pt[1]-tkp.size//2)
-                            ,cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,0))
-                expandingKPs.append(kpHist[tkp.class_id].keypoint)
+    # Draw expanding keypoints with tags
+    if not opts.nodraw and opts.drawtags:
+        expandingKPs = []
+        for m in matches:
+            qkp = queryKP[m.queryIdx]
+            tkp = trainKP[m.trainIdx]
+            scale = kpHist[tkp.class_id].scalehist[-1]
+            tstep = -np.diff(kpHist[tkp.class_id].timehist[-1])
+            # tstep = 1
+            ttc = tstep / scale
+
+            kpinfo = "(%d,%.2f,%.3f)" % (tkp.class_id,scale,ttc)
+            cv2.putText(dispim,kpinfo,inttuple(tkp.pt[0]+tkp.size//2,tkp.pt[1]-tkp.size//2)
+                        ,cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,0))
+            expandingKPs.append(kpHist[tkp.class_id].keypoint)
+
         cv2.drawKeypoints(dispim, expandingKPs, dispim, color=(0,0,255)
                           , flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
-        # Draw clusters with tags
-        votes = [sum(kpHist[kp.class_id].detects for kp in c.KPs) for c in cluster]
-        for c, ttc in zip(cluster,ttc_cluster):
-            clustinfo = "(%d,%.2f)" % (len(c.KPs),ttc)
-            cv2.putText(dispim,clustinfo,(c.p1[0]-5,c.p1[1])
-                        ,cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0,0,255))
+        # # Draw clusters with tags
+        # votes = [sum(kpHist[kp.class_id].detects for kp in c.KPs) for c in cluster]
+        # for c, ttc in zip(cluster,ttc_cluster):
+        #     clustinfo = "(%d,%.2f)" % (len(c.KPs),ttc)
+        #     cv2.putText(dispim,clustinfo,(c.p1[0]-5,c.p1[1])
+        #                 ,cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0,0,255))
 
-            # Draw an arrow denoting the direction to avoid obstacle
-            x_obs, y = c.pt
-            if (x_obs-(currFrame.shape[1]//2)) < 0: offset = 50
-            if x_obs >= (currFrame.shape[1]//2):    offset = -50
-            cv2.arrowedLine(dispim, (currFrame.shape[1]//2,currFrame.shape[0] - 50)
-                            , (currFrame.shape[1]//2+offset,currFrame.shape[0] - 50)
-                            , (0,255,0), 3)
+        #     # Draw an arrow denoting the direction to avoid obstacle
+        #     x_obs, y = c.pt
+        #     if (x_obs-(currFrame.shape[1]//2)) < 0: offset = 50
+        #     if x_obs >= (currFrame.shape[1]//2):    offset = -50
+        #     cv2.arrowedLine(dispim, (currFrame.shape[1]//2,currFrame.shape[0] - 50)
+        #                     , (currFrame.shape[1]//2+offset,currFrame.shape[0] - 50)
+        #                     , (0,255,0), 3)
 
-            # draw cluster ranking
-            clr = (0,255-sum(kpHist[kp.class_id].detects for kp in c.KPs)*165./max(votes),255)
-            cv2.rectangle(dispim,c.p0,c.p1,color=clr,thickness=2)
+        #     # draw cluster ranking
+        #     clr = (0,255-sum(kpHist[kp.class_id].detects for kp in c.KPs)*165./max(votes),255)
+        #     cv2.rectangle(dispim,c.p0,c.p1,color=clr,thickness=2)
 
-    ''''
+    '''
     Handle input keyboard events
     '''
     cv2.imshow(gmain_win, dispim)
