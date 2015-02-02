@@ -26,12 +26,16 @@ the pinhole camera model.
 
 In other words,
 
-![TTC](http://www.sciweavers.org/tex2img.php?eq=%5Cfrac%7Bf%7D%7Bcw%7D%20%3D%20%5Cfrac%7BBC%7D%7BW%7D%20%2C%20%5Cfrac%7Bf%7D%7Bw%7D%20%3D%20%5Cfrac%7BAC%7D%7BW%7D%20%5CLongrightarrow%20t_%7BBC%7D%3Dt_%7BAB%7D%20.%20%5Cfrac%7B1%7D%7Bc-1%7D&bc=White&fc=Black&im=jpg&fs=12&ff=arev&edit=0)
+     f     BC   f     AC                      1  
+    --  =  -- , -  =  --    =>  t   = t   . -----
+    cw      W   w      W         BC    AB   c - 1
+
 
 An alternate formulation gives the distance to object using the viewing angle and estimated distance between A and B
 
-![Distance](http://www.sciweavers.org/tex2img.php?eq=BC%3D%5Cfrac%7BAB%5Ctan%7B%5Calpha%7D%7D%7B%5Ctan%7B%5Cbeta%7D-%5Ctan%7B%5Calpha%7D%7D&bc=White&fc=Black&im=jpg&fs=12&ff=arev&edit=0)
-
+              ABtan{alpha}     
+    BC = ----------------------
+         tan{beta} - tan{alpha}
 
 ## Related works
 
