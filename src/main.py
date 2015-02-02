@@ -72,9 +72,12 @@ parser.add_argument("-b", "--bag", dest="bag", default=None
 parser.add_argument("--threshold", dest="threshold", type=float, default=2000.
                   , help="Set the Hessian threshold for keypoint detection.")
 
-parser.add_argument("-m", "--draw-scale-match", dest="showmatches"
+parser.add_argument("-m", "--draw-matches", dest="showmatches"
                     , action="store_true", default=False
                     , help="Show scale matches for each expanding keypoint.")
+
+parser.add_argument("--draw-tags", dest="drawtags", action="store_true", default=False
+                    , help="Draw tags for individual expanding keypoints.")
 
 parser.add_argument("-v", "--verbose", dest="verbose", action="count", default=1
                     , help="Print verbose output to stdout. Multiple v's for more verbosity.")
@@ -82,8 +85,8 @@ parser.add_argument("-v", "--verbose", dest="verbose", action="count", default=1
 parser.add_argument("-q", "--quiet", dest="quiet", default=False, action='store_true'
                     , help="Quiet all output to stdout. (%(default)s)")
 
-parser.add_argument("--draw-tags", dest="drawtags", action="store_true", default=False
-                    , help="Draw tags for individual expanding keypoints.")
+parser.add_argument("-p", "--publish", dest="publish", default=False, action='store_true'
+                    , help="Publish data for each frame. (%(default)s)")
 
 parser.add_argument("--no-draw", dest="nodraw", action="store_true", default=False
                     , help="Don't draw on display image. (true)")
@@ -126,7 +129,7 @@ else:
 
 # start the node and control loop
 rospy.init_node("flownav", anonymous=False)
-datalog = DataLogger()
+datalog = DataLogger() if opts.publish else None
 
 kbctrl = None
 if opts.camtopic == "/ardrone" and not opts.video:
@@ -202,7 +205,7 @@ surf_ui = cv2.SURF(hessianThreshold=opts.threshold,extended=True,upright=True)
 # mask out a central portion of the image
 lastFrame, t_last = frmbuf.grab()
 roi = np.zeros(lastFrame.shape,np.uint8)
-scrapY, scrapX = lastFrame.shape[0]//8, lastFrame.shape[1]//8
+scrapY, scrapX = lastFrame.shape[0]//4, lastFrame.shape[1]//4
 roi[scrapY:-scrapY, scrapX:-scrapX] = True
 
 if opts.record:
@@ -224,14 +227,17 @@ getMatchKPs = lambda x: (queryKP[x.queryIdx],trainKP[x.trainIdx])
 # errsum = 0
 kpHist = OrderedDict()
 while not rospy.is_shutdown():
-    if frmbuf.looped:
-        kpHist.clear()
-        lastFrame, t_last = currFrame, t_curr
-        queryKP, qdesc = surf_ui.detectAndCompute(lastFrame,roi)
-        idgen = uniqid_gen()
-        getuniqid = lambda : idgen.next()
-        for kp in queryKP: kp.class_id = getuniqid()
-        frmbuf.looped = False
+    try:
+        if frmbuf.looped:
+            kpHist.clear()
+            lastFrame, t_last = currFrame, t_curr
+            queryKP, qdesc = surf_ui.detectAndCompute(lastFrame,roi)
+            idgen = uniqid_gen()
+            getuniqid = lambda : idgen.next()
+            for kp in queryKP: kp.class_id = getuniqid()
+            frmbuf.looped = False
+    except AttributeError:
+        pass
     currFrame, t_curr = frmbuf.grab()
 
     t1_loop = time.time() # loop timer
@@ -295,7 +301,7 @@ while not rospy.is_shutdown():
     Then update the history of expanding keypoints
     '''
     matches = filter(lambda m: trainKP[m.trainIdx].size > queryKP[m.queryIdx].size, matches)
-    matches, kpscales = smatch.estimateKeypointExpansion(frmbuf, matches, queryKP, trainKP, kpHist, 'L1')
+    matches, kpscales = smatch.estimateKeypointExpansion(frmbuf, matches, queryKP, trainKP, kpHist, 'L2')
 
     if opts.showmatches:
         lastkey = smatch.drawTemplateMatches(frmbuf, matches, queryKP, trainKP
@@ -322,21 +328,21 @@ while not rospy.is_shutdown():
                                , detects=kpHist[clsid].detects
                                , trainSize=trainKP[m.trainIdx].size
                                , querySize=queryKP[m.queryIdx].size))
-    keypoints=sorted(keypoints, key=op.attrgetter('scale','detects'), reverse=True)[:10]
-    datalog.write(frame_id=frmbuf.frameNum
-                  , timestep=Duration(int((t_curr-t_last)/1000)
-                                      , ((t_curr-t_last)%1000)*1e6)
-                  , keypoints=keypoints)
+    if opts.publish:
+        keypoints=sorted(keypoints, key=op.attrgetter('scale','detects'), reverse=True)[:10]
+        datalog.write(frame_id=frmbuf.frameNum
+                      , timestep=Duration(int((t_curr-t_last)/1000), ((t_curr-t_last)%1000)*1e6)
+                      , keypoints=keypoints)
         
     # Update the keypoint history for previously expanding keypoint that were
     # not detected/matched in this frame
     detected = set(map(op.attrgetter('class_id'),trainKP))
 
     # get rid of old matches
-    kpHist = OrderedDict(filter(lambda kv: kv[1].downdate().age < LAST_DAY, kpHist.items()))
+    kpHist = OrderedDict(filter(lambda kv: kv[1].downdate().age < LAST_DAY, kpHist.iteritems()))
 
     # keep matches that were missed in this frame
-    missed = filter(lambda k: (kpHist[k].age > 0) and (k not in detected), kpHist)
+    missed = filter(lambda k: (kpHist[k].age > 0) and (k not in detected), kpHist.iterkeys())
     missed = [(kpHist[k].keypoint,kpHist[clsid].descriptor.reshape(1,-1)) for k in missed]
     if missed:
         missed_kp, missed_desc = zip(*missed)
@@ -348,13 +354,13 @@ while not rospy.is_shutdown():
     obtain a more accurate estimate of TTC
     '''
     # cluster keypoints and sort my maximum inter-cluster distance
-    ttc_cluster = []
-    expandingKPs = filter(lambda x: (x.class_id in kpHist) and (kpHist[x.class_id].age == 0), trainKP)
-    cluster = ClusterKeypoints(expandingKPs, kpHist, currFrame)
-    for c in cluster:
-        tstep = np.array( [op.sub(*reversed(kpHist[kp.class_id].timehist[-1])) for kp in c.KPs] )
-        scale = np.array( [kpHist[kp.class_id].scalehist[-1] for kp in c.KPs] )
-        ttc_cluster.append(np.median(tstep / scale))
+    # ttc_cluster = []
+    # expandingKPs = filter(lambda x: (x.class_id in kpHist) and (kpHist[x.class_id].age == 0), trainKP)
+    # cluster = ClusterKeypoints(expandingKPs, kpHist, currFrame)
+    # for c in cluster:
+    #     tstep = np.array( [op.sub(*reversed(kpHist[kp.class_id].timehist[-1])) for kp in c.KPs] )
+    #     scale = np.array( [kpHist[kp.class_id].scalehist[-1] for kp in c.KPs] )
+    #     ttc_cluster.append(np.median(tstep / scale))
 
     # if kbctrl and cluster:
     #     c = cluster[0]
@@ -433,7 +439,7 @@ while not rospy.is_shutdown():
        elif not frmbuf.live:
            # limit the loop rate to 10 Hz the hacky way for display purposes
            t = (time.time()-t1_loop)
-           k = cv2.waitKey(int(max((0.05-t)*1000,1)))%256
+           k = cv2.waitKey(int(max((0.075-t)*1000,1)))%256
        else:
            k = cv2.waitKey(1)%256
        if k == ord('m'):

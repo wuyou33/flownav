@@ -9,6 +9,7 @@ import numpy as np
 
 VERBOSE = 0
 
+
 class VideoBuffer(object):
     def __init__(self,vidfile,start=None,stop=None,loop=False,historysize=1):
         self.cap = cv2.VideoCapture(vidfile)

@@ -9,8 +9,8 @@ import numpy as np
 from itertools import cycle, product
 from random import shuffle
 
-BUFSIZE = 160
-SCROLLSIZE = 80
+BUFSIZE = 50
+SCROLLSIZE = 20
 NTRACKEDKPS = 10
 NMAXLINES = 100
 
@@ -95,9 +95,11 @@ class DataSubscriber(object):
         obj_size = self._buffer['size']
         obj_id = self._buffer['id']
 
+        # remove any points that didn't show up this frame
         for l in set(self.prevkeypoints).difference(datum.keypoints[:NTRACKEDKPS]):
             self.keypoints.remove(l)
 
+        dt = datum.timestep.secs+datum.timestep.nsecs/1e9
         for kp in datum.keypoints[:NTRACKEDKPS]:
             clsid = kp.class_id
 
@@ -106,13 +108,10 @@ class DataSubscriber(object):
             else:
                 i = len(self.keypoints)
                 self.keypoints.append(clsid)
-                # obj_size[self.__bufferindex-1, i] = kp.trainSize/float(kp.querySize)
-                # obj_id[self.__bufferindex-1, i] = clsid
-
-            obj_size[self.__bufferindex, i] = kp.trainSize/float(kp.querySize)
+            obj_size[self.__bufferindex, i] = 1/float(kp.scale-1)
             obj_id[self.__bufferindex, i] = clsid
 
-        # objSize[self.__bufferindex, 0] = np.mean(kpSizes)
+        # objSize[self.__bufferindex, 0] = np.mean(objSize[self.__bufferindex, 1:len(kpSizes)+1])
         # objSize[self.__bufferindex, 1:len(kpSizes)+1] = kpSizes
         
         self.prevkeypoints = self.keypoints
@@ -200,6 +199,7 @@ class DataPlotter(DataSubscriber):
         ax.autoscale_view(scaley=True)
         ax.set_xlim(self._range[0],self._range[-1])
 
+        # Update the legend, put oldest lines first
         handles, labels = ax.get_legend_handles_labels()
         ax.legend(reversed(handles[-NTRACKEDKPS:])
                   , reversed(labels[-NTRACKEDKPS:]))
@@ -212,7 +212,7 @@ class DataPlotter(DataSubscriber):
 
 
 if __name__ == '__main__':
-    buffer_dtype = [('size',np.int64,(NTRACKEDKPS,)), ('id',np.int64,(NTRACKEDKPS,))]
+    buffer_dtype = [('size',np.float64,(NTRACKEDKPS,)), ('id',np.int64,(NTRACKEDKPS,))]
     databuffer = np.zeros((BUFSIZE,),dtype=buffer_dtype)
     databuffer[:] = INVALID_INT_VALUE
 
