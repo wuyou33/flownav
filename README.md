@@ -4,13 +4,9 @@ This project implements an interpretation of the algorithm developed by Mori and
 
 ## Assumptions for Obstacle Avoidance
 
-+ Assume a rectangular coordinate system with whose origin is located the AR
-Drone's frontal camera image plane. The horizontal and vertical axes
-of the image plane define the X and Y axes and the Z axis is orthogonal to the image
-plane pointing towards the front of the drone.
++ The drone moves along the Z-axis at a constant velocity with yaw/pitch velocities being negligible.
 
-+ The drone moves along the Z-axis at a constant velocity with angular
-velocities being negligible.
++ Obstacles are small relative to image area i.e., fit well within the imaged scene.
 
 + Obstacles are static or motion is dominated by camera motion.
 
@@ -27,6 +23,15 @@ frames. Figure 1 below shows the derivation of this relationship assuming the
 the pinhole camera model.
 
 ![Estimating TTC](ttc_diagram.png "Estimating TTC")
+
+In other words,
+
+![TTC](http://www.sciweavers.org/tex2img.php?eq=%5Cfrac%7Bf%7D%7Bcw%7D%20%3D%20%5Cfrac%7BBC%7D%7BW%7D%20%2C%20%5Cfrac%7Bf%7D%7Bw%7D%20%3D%20%5Cfrac%7BAC%7D%7BW%7D%20%5CLongrightarrow%20t_%7BBC%7D%3Dt_%7BAB%7D%20.%20%5Cfrac%7B1%7D%7Bc-1%7D&bc=White&fc=Black&im=jpg&fs=12&ff=arev&edit=0)
+
+An alternate formulation gives the distance to object using the viewing angle and estimated distance between A and B
+
+![Distance](http://www.sciweavers.org/tex2img.php?eq=BC%3D%5Cfrac%7BAB%5Ctan%7B%5Calpha%7D%7D%7B%5Ctan%7B%5Cbeta%7D-%5Ctan%7B%5Calpha%7D%7D&bc=White&fc=Black&im=jpg&fs=12&ff=arev&edit=0)
+
 
 ## Related works
 
